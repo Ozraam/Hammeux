@@ -1,0 +1,19 @@
+services:
+  hameaux:
+    build: .
+    image: hameaux:latest
+    container_name: hameaux
+    restart: unless-stopped
+    # Utilisateur de la tour (rempli dans .env par deploy.sh) : les fichiers de ./data lui appartiennent.
+    user: "${HAMEAUX_UID:-1000}:${HAMEAUX_GID:-1000}"
+    env_file:
+      - path: .env
+        required: false
+    ports:
+      # Adresse de l'hôte sur laquelle publier le site (voir .env.example).
+      - "${HAMEAUX_HOST_BIND:-0.0.0.0}:${HAMEAUX_HOST_PORT:-8080}:8080"
+    volumes:
+      # Le monde (sauvegardes, base) vit à côté du projet et survit aux mises à jour.
+      - ./data:/data
+    # Laisse au serveur le temps de sauvegarder le monde à l'arrêt.
+    stop_grace_period: 30s

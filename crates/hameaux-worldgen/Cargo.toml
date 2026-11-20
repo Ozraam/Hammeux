@@ -1,0 +1,10 @@
+[package]
+name = "hameaux-worldgen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+hameaux-core = { version = "0.1.0", path = "../hameaux-core" }
+noise = "0.9.0"
+rayon = "1.12.0"

@@ -1,0 +1,9 @@
+[package]
+name = "hameaux-cli"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+hameaux-core = { version = "0.1.0", path = "../hameaux-core" }
+hameaux-worldgen = { version = "0.1.0", path = "../hameaux-worldgen" }
+png = "0.18.1"

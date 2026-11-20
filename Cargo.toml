@@ -1,0 +1,17 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[profile.release]
+debug = 1
+lto = "thin"
+
+# La génération du monde est lente sans optimisation : on optimise les dépendances
+# et le générateur même en mode debug (tests, `cargo run`).
+[profile.dev.package."*"]
+opt-level = 2

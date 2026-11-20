@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hameaux</title>
+  </head>
+  <body>
+    <div id="hud">
+      <div class="title">Hameaux <span id="status" class="dot" title="Connexion"></span></div>
+      <div id="clock">Connexion…</div>
+      <div id="meta"></div>
+      <div class="controls">
+        <button id="pause" type="button">Pause</button>
+        <select id="speed" aria-label="Vitesse">
+          <option value="60">×60 (1 jour = 24 min)</option>
+          <option value="600">×600</option>
+          <option value="6000">×6 000</option>
+        </select>
+        <button id="fit" type="button">Toute la carte</button>
+      </div>
+      <details id="villages-panel" open>
+        <summary>Villages</summary>
+        <div id="villages"></div>
+      </details>
+      <details id="chronicle-panel">
+        <summary>Chronique</summary>
+        <div id="chronicle"><p class="muted">Chargement…</p></div>
+      </details>
+    </div>
+    <aside id="panel" hidden></aside>
+    <div id="tip" hidden></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

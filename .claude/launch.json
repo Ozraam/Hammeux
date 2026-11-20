@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "hameaux",
+      "runtimeExecutable": "cargo",
+      "runtimeArgs": ["run", "-p", "hameaux-server"],
+      "env": { "HAMEAUX_DATA_DIR": "./data", "HAMEAUX_WEB_DIR": "./web/dist", "HAMEAUX_SEED": "42", "HAMEAUX_BIND": "127.0.0.1:8080" },
+      "port": 8080
+    }
+  ]
+}
