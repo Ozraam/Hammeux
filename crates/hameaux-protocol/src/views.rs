@@ -2,7 +2,9 @@
 
 use hameaux_core::{
     Clock, World,
+    economy::{Good, Workshop},
     events::Event,
+    people::Carry,
     people::{Person, Status},
     settlement::{FieldState, HouseState},
     sim::lien_de,
@@ -25,7 +27,7 @@ pub struct PersonDot {
     pub stage: u8,
     /// Index de `Act`.
     pub act: u8,
-    /// Index de `Carry` + 1 (0 = rien).
+    /// Ce qu'il porte : 0 rien, 1 + index du bien (`Good`), 255 son baluchon.
     pub carry: u8,
     /// Vêtement, peau, cheveux.
     pub looks: [u8; 3],
@@ -44,6 +46,8 @@ pub struct HouseView {
     pub progress: f32,
     pub roof: u8,
     pub family: String,
+    /// 0 maison, 1 moulin, 2 four à pain, 3 forge.
+    pub kind: u8,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -123,6 +127,12 @@ impl Scene {
                     progress: h.progress(),
                     roof: h.roof,
                     family: h.family.clone(),
+                    kind: match world.economy.workshops.get(&h.id) {
+                        None => 0,
+                        Some(Workshop::Mill) => 1,
+                        Some(Workshop::Bakery) => 2,
+                        Some(Workshop::Smithy) => 3,
+                    },
                 });
             }
             for f in v.fields.iter().filter(|f| inside(f.x as f32, f.y as f32)) {
@@ -156,7 +166,11 @@ impl Scene {
                     1
                 },
                 act: p.brain.act as u8,
-                carry: p.brain.carry.map_or(0, |c| c as u8 + 1),
+                carry: match p.brain.carry {
+                    None => 0,
+                    Some(Carry::Good(g)) => g as u8 + 1,
+                    Some(Carry::Bundle) => 255,
+                },
                 looks: p.looks,
             });
         }
@@ -218,7 +232,40 @@ pub struct PersonSheet {
     /// Meilleurs amis (score dans `note`).
     pub friends: Vec<PersonRef>,
     pub master: Option<PersonRef>,
+    /// Réserves et argent de son foyer.
+    pub household: Option<HouseholdView>,
     pub events: Vec<EventView>,
+}
+
+/// Une quantité d'un bien.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct GoodAmount {
+    pub good: u8,
+    pub label: String,
+    pub amount: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct HouseholdView {
+    pub coins: f32,
+    /// Jours de nourriture d'avance.
+    pub food_days: f32,
+    pub goods: Vec<GoodAmount>,
+    pub hungry: bool,
+}
+
+fn goods_list(inv: &hameaux_core::economy::Inv) -> Vec<GoodAmount> {
+    Good::ALL
+        .iter()
+        .filter(|&&g| inv[g as usize] >= 0.05)
+        .map(|&g| GoodAmount {
+            good: g as u8,
+            label: g.label().into(),
+            amount: inv[g as usize],
+        })
+        .collect()
 }
 
 impl PersonSheet {
@@ -383,6 +430,17 @@ impl PersonSheet {
                 .master
                 .filter(|_| tick < p.apprentice_until)
                 .map(|m| person_ref(world, m, "maître")),
+            household: p.home.and_then(|h| world.economy.households.get(&h)).map(|h| {
+                let members = village
+                    .and_then(|v| v.house(p.home?))
+                    .map_or(1, |house| house.residents.len().max(1));
+                HouseholdView {
+                    coins: h.coins,
+                    food_days: h.rations() / members as f32,
+                    goods: goods_list(&h.inv),
+                    hungry: h.hungry_days > 0,
+                }
+            }),
             events,
         })
     }
@@ -435,7 +493,28 @@ pub struct VillageSheet {
     pub founded: String,
     /// Habitants par métier : (libellé, nombre).
     pub jobs: Vec<(String, u32)>,
+    /// Caisse du village (taxes), en sous.
+    pub treasury: f32,
+    /// Ateliers construits.
+    pub workshops: Vec<String>,
+    pub market: Vec<PriceRow>,
     pub events: Vec<EventView>,
+}
+
+/// Un bien sur le marché d'un village.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PriceRow {
+    pub good: u8,
+    pub label: String,
+    pub price: f32,
+    /// Prix il y a 7 jours (pour la tendance).
+    pub week_ago: f32,
+    /// Prix des derniers jours (le plus récent à la fin).
+    pub history: Vec<f32>,
+    pub volume: f32,
+    pub supply: f32,
+    pub demand: f32,
 }
 
 impl VillageSheet {
@@ -461,6 +540,35 @@ impl VillageSheet {
             .collect();
         jobs.sort_by_key(|j| std::cmp::Reverse(j.1));
         let need: f32 = people.iter().map(|p| if p.child(tick) { 0.6 } else { 1.0 }).sum();
+        let vi = world.village_index(id)?;
+        let household_food: f32 = v
+            .houses
+            .iter()
+            .filter_map(|h| world.economy.households.get(&h.id))
+            .map(|h| h.rations())
+            .sum();
+        let market = world.economy.markets.get(vi);
+        let market = Good::ALL
+            .iter()
+            .map(|&g| {
+                let gi = g as usize;
+                let history: Vec<f32> = market
+                    .map(|m| m.history.iter().map(|p| p[gi]).collect())
+                    .unwrap_or_default();
+                let price = market.map_or(g.base_price(), |m| m.price[gi]);
+                let week_ago = history.len().checked_sub(8).map_or(price, |k| history[k]);
+                PriceRow {
+                    good: g as u8,
+                    label: g.label().into(),
+                    price,
+                    week_ago,
+                    history,
+                    volume: market.map_or(0.0, |m| m.volume[gi]),
+                    supply: market.map_or(0.0, |m| m.supply[gi]),
+                    demand: market.map_or(0.0, |m| m.demand[gi]),
+                }
+            })
+            .collect();
         let c = Clock::at(v.founded);
         Some(VillageSheet {
             id,
@@ -492,7 +600,7 @@ impl VillageSheet {
             wood: v.stock.wood,
             stone: v.stock.stone,
             food_days: if need > 0.0 {
-                (v.stock.food / need) as u32
+                ((v.stock.food + household_food) / need) as u32
             } else {
                 0
             },
@@ -505,6 +613,14 @@ impl VillageSheet {
                 c.day
             ),
             jobs,
+            treasury: world.economy.treasury.get(vi).copied().unwrap_or(0.0),
+            workshops: v
+                .houses
+                .iter()
+                .filter(|h| h.state == HouseState::Inhabited)
+                .filter_map(|h| world.economy.workshops.get(&h.id).map(|w| w.label().to_string()))
+                .collect(),
+            market,
             events: world
                 .chronicle
                 .events

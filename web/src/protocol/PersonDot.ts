@@ -13,7 +13,7 @@ stage: number,
  */
 act: number, 
 /**
- * Index de `Carry` + 1 (0 = rien).
+ * Ce qu'il porte : 0 rien, 1 + index du bien (`Good`), 255 son baluchon.
  */
 carry: number, 
 /**

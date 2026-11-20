@@ -4,6 +4,7 @@
 //! et sait le sérialiser. Tout le reste (boucle temps réel, fichiers, web) vit dans `hameaux-server`.
 
 pub mod clock;
+pub mod economy;
 pub mod events;
 pub mod map;
 pub mod names;

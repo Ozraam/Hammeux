@@ -76,6 +76,21 @@ fn main() {
                 world.tick,
                 world.tick as f64 / secs
             );
+            if let Some(m) = world.economy.markets.first() {
+                use hameaux_core::economy::Good;
+                println!("— marché de {} —", world.villages[0].name);
+                for g in Good::ALL {
+                    let i = g as usize;
+                    println!(
+                        "  {:<8} prix {:>6.2}  offre {:>6.1}  demande {:>6.1}  vendu {:>6.1}",
+                        g.label(),
+                        m.price[i],
+                        m.supply[i],
+                        m.demand[i],
+                        m.volume[i]
+                    );
+                }
+            }
             println!("— événements par type —");
             let mut kinds: Vec<_> = tally.into_iter().collect();
             kinds.sort_by_key(|k| std::cmp::Reverse(k.1));
@@ -93,29 +108,56 @@ fn main() {
 }
 
 fn weekly(world: &World, day: u64) {
+    use hameaux_core::economy::Good;
     let pop = world.alive().count();
     println!("jour {day:>3} · {} · {pop} habitants", world.clock());
-    for v in &world.villages {
+    let tick = world.tick;
+    for (vi, v) in world.villages.iter().enumerate() {
         let houses = v
             .houses
             .iter()
             .filter(|h| h.state == HouseState::Inhabited)
             .count();
-        let sites = v
+        let homes: Vec<_> = v
             .houses
             .iter()
-            .filter(|h| h.state == HouseState::Building)
-            .count();
+            .filter_map(|h| world.economy.households.get(&h.id))
+            .collect();
+        let food: f32 = homes.iter().map(|h| h.rations()).sum();
+        let coins: f32 = homes.iter().map(|h| h.coins).sum();
+        let vpop = world.population(v.id).max(1) as f32;
+        let price = |g: Good| world.economy.markets.get(vi).map_or(0.0, |m| m.price[g as usize]);
+        let mut jobs = std::collections::BTreeMap::new();
+        for p in world
+            .alive()
+            .filter(|p| p.village == v.id && !p.child(tick) && !p.elder(tick))
+        {
+            if let Some(j) = p.job {
+                *jobs.entry(j.label(false)).or_insert(0) += 1;
+            }
+        }
+        let shops: Vec<&str> = v
+            .houses
+            .iter()
+            .filter(|h| h.state == HouseState::Inhabited)
+            .filter_map(|h| world.economy.workshops.get(&h.id).map(|w| w.label()))
+            .collect();
         println!(
-            "    {:<26} {:>3} hab. {:>2} maisons (+{sites}) {:>2} champs · nourriture {:>5.0} bois {:>3} pierre {:>3}",
+            "    {:<22} {:>3} hab. {:>2} maisons · vivres {:>3.0} j · {:>4.0} sous/foyer · caisse {:>4.0} · grain {:.2} pain {:.2} bois {:.2} outils {:.1}{}",
             v.name,
             world.population(v.id),
             houses,
-            v.fields.len(),
-            v.stock.food,
-            v.stock.wood,
-            v.stock.stone
+            food / vpop,
+            coins / homes.len().max(1) as f32,
+            world.economy.treasury.get(vi).copied().unwrap_or(0.0),
+            price(Good::Grain),
+            price(Good::Bread),
+            price(Good::Wood),
+            price(Good::Tools),
+            if v.hungry_days > 0 { " · FAIM" } else { "" }
         );
+        let jobs: Vec<String> = jobs.iter().map(|(j, n)| format!("{n} {j}")).collect();
+        println!("        {} | {}", jobs.join(", "), shops.join(", "));
     }
 }
 

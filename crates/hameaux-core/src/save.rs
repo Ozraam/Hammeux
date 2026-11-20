@@ -13,7 +13,8 @@ use crate::{
 
 pub const MAGIC: &[u8; 4] = b"HAMX";
 /// 1 : graine + tick. 2 : + carte et emplacements des villages. 3 : + habitants et bâtiments.
-pub const SAVE_VERSION: u32 = 3;
+/// 4 : + économie (foyers, marchés, ateliers), ajoutée à la fin du monde.
+pub const SAVE_VERSION: u32 = 4;
 
 #[derive(Debug, thiserror::Error)]
 pub enum SaveError {
@@ -29,6 +30,7 @@ pub enum SaveError {
 
 /// Résultat de la lecture d'une sauvegarde.
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum Loaded {
     Current(World),
     /// Version 1 (phase 0) : pas de carte. Le serveur régénère le monde depuis la graine
@@ -61,6 +63,21 @@ struct VillageV2 {
     x: u32,
     y: u32,
     color: u32,
+}
+
+/// Monde de la phase 2 : le monde actuel sans son économie (mêmes types, même ordre).
+#[derive(Deserialize)]
+struct WorldV3 {
+    seed: u64,
+    tick: u64,
+    map: Map,
+    villages: Vec<crate::settlement::Village>,
+    people: Vec<crate::people::Person>,
+    chronicle: crate::events::Chronicle,
+    rng: crate::rng::Rng,
+    next_building: u32,
+    chunk_rev: Vec<u64>,
+    map_rev: u64,
 }
 
 #[derive(Deserialize)]
@@ -115,6 +132,26 @@ pub fn decode(bytes: &[u8]) -> Result<Loaded, SaveError> {
                 map: w.map,
                 sites,
             })
+        }
+        3 => {
+            let v: WorldV3 = postcard::from_bytes(&raw)?;
+            let mut w = World {
+                seed: v.seed,
+                tick: v.tick,
+                map: std::sync::Arc::new(v.map),
+                villages: v.villages,
+                people: v.people,
+                chronicle: v.chronicle,
+                rng: v.rng,
+                next_building: v.next_building,
+                chunk_rev: v.chunk_rev,
+                map_rev: v.map_rev,
+                economy: Default::default(),
+                caches: Default::default(),
+            };
+            w.ensure_caches();
+            w.bootstrap_economy();
+            Ok(Loaded::Current(w))
         }
         _ => {
             let mut w: World = postcard::from_bytes(&raw)?;
@@ -200,6 +237,28 @@ pub(crate) mod tests {
                 assert_eq!(m, map);
                 assert_eq!(sites[0].name, "Vaux");
                 assert_eq!((sites[0].x, sites[0].y), (1, 2));
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// Une sauvegarde de la phase 2 (sans économie) est reprise avec des foyers approvisionnés.
+    #[test]
+    fn reads_v3() {
+        let w = sample();
+        // Encodage « v3 » : le monde sans son dernier champ (l'économie).
+        let mut raw = postcard::to_stdvec(&w).unwrap();
+        let eco = postcard::to_stdvec(&w.economy).unwrap();
+        raw.truncate(raw.len() - eco.len());
+        let mut bytes = MAGIC.to_vec();
+        bytes.extend_from_slice(&3u32.to_le_bytes());
+        bytes.extend_from_slice(&zstd::encode_all(&raw[..], 3).unwrap());
+        match decode(&bytes).unwrap() {
+            Loaded::Current(back) => {
+                assert_eq!(back.tick, w.tick);
+                assert_eq!(back.people.len(), w.people.len());
+                assert!(!back.economy.households.is_empty());
+                assert!(back.economy.households.values().all(|h| h.coins > 0.0));
             }
             other => panic!("{other:?}"),
         }

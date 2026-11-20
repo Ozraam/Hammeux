@@ -143,7 +143,19 @@ Chaque phase se termine par quelque chose de visible dans le navigateur et par d
    - API : `ClientMsg::View` (zone regardée) → `Scene` (habitants, maisons, champs, greniers visibles, 4 fois par seconde) ; `Villages` (population) ; `GET /api/person/{id}`, `/api/village/{id}`, `/api/events`, `/api/map/changes`.
    - Client : maisons (chantier → toit, abandon, ruine), champs (friche → épis dorés), grenier et puits, habitants interpolés avec ce qu'ils portent ; clic → fiche (famille, amis, activité, histoire) avec « Suivre » ; fiche de village ; chronique ; tronçons de carte rechargés quand une route ou un défrichement les modifie.
    - Équilibre (`hameaux-cli run --days 336`) : ~5 % de croissance par an, villages de 25 à 80 habitants après 12 ans, greniers bien remplis (pas encore de disette : l'économie de la phase 3 doit créer de la tension).
-3. **Plusieurs villages + économie de base** : stocks par foyer, chaînes de production, marché local, prix, choix du métier par revenu.
+3. ✅ **Économie de base** (20/11/2026) :
+   - 9 biens : grain, farine, pain, poisson, viande, bois, pierre, minerai, outils. Rations : pain et viande 1, farine 0,9, grain et poisson 0,8 ; goût (on paie le pain plus cher que le grain) ; la nourriture se gâte (pain 3 %/jour, viande et poisson 4 %, grain 0,5 %).
+   - Foyers (un par maison) : réserves et argent (« sous »). Les récoltes et ce qu'on rapporte vont au foyer, 10 % du grain au grenier commun.
+   - Nouveaux métiers : meunier (moulin), boulanger (four, consomme du bois), forgeron (forge : minerai + bois → outils), pêcheur, chasseur, mineur. Ateliers construits quand le village grandit (moulin à 12 habitants, four à 16, forge à 20 si du minerai est à portée).
+   - Outils : rendement ×1,4, s'usent en ~40 séances.
+   - Marché quotidien (11 h) : chaque foyer garde une semaine de vivres, son bois de chauffe (plus l'hiver) et les matières de son métier, vend le reste et achète ce qui manque (la nourriture la moins chère pour son goût). Les prix bougent avec l'offre et la demande (bornés entre 0,3 et 5 fois le prix de départ). Taxe de 10 % pour la caisse du village.
+   - Caisse du village : salaire des bâtisseurs, achat du bois et de la pierre des chantiers, achat de vivres pour le grenier commun (qui nourrit les foyers qui n'ont plus rien), avances aux artisans à court d'argent (remboursées sur leurs ventes).
+   - Métiers choisis selon ce qu'ils rapportent aux prix du marché (et ce qu'ils ont rapporté), avec un bonus pour le métier des parents ; un adulte peut changer de métier au plus une fois par an. Chômage : quand son métier ne rapporte presque rien et que le foyer a des réserves, on se repose.
+   - Une récolte par an (semis au printemps) ; ce qui n'est pas moissonné pourrit à l'hiver ; pas de nouveaux champs quand le grain ne se vend plus.
+   - Disette par foyer : le grenier commun aide, puis la famille part au bout de 4 jours de faim.
+   - Sauvegarde v4 ; une sauvegarde v3 (phase 2) est reprise avec un foyer par maison (30 sous et sa part du grenier).
+   - Site : ateliers dessinés (moulin à ailes, four qui fume, forge), ce que porte chaque habitant ; fiche de village avec caisse, ateliers et marché (prix, tendance sur 7 jours, petite courbe, quantités vendues) ; fiche d'habitant avec son foyer (argent, jours de vivres, réserves).
+   - Équilibre (`hameaux-cli run --days 224`) : croissance ~11 %/an, pas de famine sur 8 ans. Limites connues : la nourriture reste abondante (prix au plancher), les outils manquent dans les villages sans forge, l'argent se concentre chez ceux dont les produits se vendent. Le commerce entre villages (phase 5) et la terre qui devient rare doivent créer plus de tension.
 4. **Cerveaux v2** : besoins, personnalité, humeur, mémoire, relations, utilité + HTN, objectifs de vie.
 5. **Entre villages** : routes, marchands, commerce, mariages et migrations, fondation de villages.
 6. **Société** : chef et conseil, taxes, justice, fêtes et foires, maladies, diffusion des savoirs.

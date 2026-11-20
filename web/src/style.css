@@ -81,3 +81,12 @@ ul.events .date { font-size: 11px; }
   #panel { top: auto; bottom: 0; right: 0; left: 0; width: auto; max-width: none; max-height: 55vh; border-radius: 14px 14px 0 0; }
   #tip { bottom: auto; top: 16px; }
 }
+
+table.market { width: 100%; border-collapse: collapse; font-size: 12px; }
+table.market th { text-align: left; color: var(--muted); font-weight: 500; }
+table.market td, table.market th { padding: 2px 4px; }
+table.market tr:nth-child(even) td { background: rgba(255, 255, 255, 0.04); }
+table.market .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.spark polyline { fill: none; stroke: #ffd98a; stroke-width: 1.4; }
+.up { color: #ef8f6c; font-size: 10px; }
+.down { color: #7bd88f; font-size: 10px; }

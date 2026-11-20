@@ -12,39 +12,6 @@ use crate::{
 use super::{DayPart, day_part};
 
 impl World {
-    /// Repas de midi : chacun mange sa ration de la journée.
-    pub(super) fn meals(&mut self) {
-        let tick = self.tick;
-        for vi in 0..self.villages.len() {
-            let id = self.villages[vi].id;
-            let need: f32 = self
-                .alive()
-                .filter(|p| p.village == id && !p.brain.leaving)
-                .map(|p| if p.child(tick) { RATION_CHILD } else { RATION_ADULT })
-                .sum();
-            if need == 0.0 {
-                continue;
-            }
-            let st = &mut self.villages[vi].stock;
-            if st.food >= need {
-                st.food -= need;
-                self.villages[vi].hungry_days = 0;
-            } else {
-                st.food = 0.0;
-                self.villages[vi].hungry_days += 1;
-                let days = self.villages[vi].hungry_days;
-                if days == 1 {
-                    let name = self.villages[vi].name.clone();
-                    self.event(Some(id), vec![], format!("Le grenier de {name} est vide"));
-                }
-                if days >= FAMINE_DAYS {
-                    self.villages[vi].hungry_days = 0;
-                    self.famine_leave(vi);
-                }
-            }
-        }
-    }
-
     /// Une fois par jour (minuit) : âges, décès, naissances, couples.
     pub(super) fn daily(&mut self) {
         let tick = self.tick;
@@ -128,11 +95,12 @@ impl World {
                 continue;
             };
             let v = &self.villages[vi];
-            let pop = self.population(v.id) as f32;
+            // Un foyer qui a de quoi manger quelques jours.
+            let food = self.economy.households.get(&h.id).map_or(0.0, |hh| hh.rations());
             if h.state != HouseState::Inhabited
                 || h.residents.len() >= HOUSE_CAPACITY
                 || v.hungry_days > 0
-                || v.stock.food < pop * 5.0
+                || food < h.residents.len() as f32 * 3.0
             {
                 continue;
             }
@@ -298,7 +266,7 @@ impl World {
             let empty = self.villages[vi]
                 .houses
                 .iter()
-                .find(|h| h.state == HouseState::Abandoned)
+                .find(|h| h.state == HouseState::Abandoned && !self.economy.workshops.contains_key(&h.id))
                 .map(|h| h.id);
             if let Some(h) = empty {
                 self.villages[vi].house_mut(h).unwrap().state = HouseState::Inhabited;
@@ -324,13 +292,19 @@ impl World {
         }
 
         // Nouveaux venus attirés par un grenier bien rempli (ou un village trop petit).
-        let food = self.villages[vi].stock.food;
+        let homes: Vec<u32> = self.villages[vi].houses.iter().map(|h| h.id).collect();
+        let food: f32 = homes
+            .iter()
+            .filter_map(|h| self.economy.households.get(h))
+            .map(|h| h.rations())
+            .sum::<f32>()
+            + self.villages[vi].stock.food;
         let sites = self.villages[vi]
             .houses
             .iter()
             .filter(|h| h.state == HouseState::Building)
             .count();
-        let attractive = pop < 8 || food > pop as f32 * 40.0;
+        let attractive = pop < 8 || food > pop as f32 * 25.0;
         if attractive
             && sites == 0
             && self.rng.chance(IMMIGRATION_PER_DAY / 144.0)
@@ -343,17 +317,31 @@ impl World {
             );
         }
 
+        if self.rng.chance(0.05) {
+            self.plan_workshops(vi);
+        }
+
         // Champs : assez pour nourrir tout le monde.
         let target = (pop as f32 * FIELDS_PER_PERSON).ceil() as usize + 1;
-        if season != Season::Winter && self.villages[vi].fields.len() < target && self.rng.chance(0.3) {
+        // … tant que le grain se vend (s'il ne vaut plus rien, inutile de défricher).
+        let grain_sells = self.economy.markets.get(vi).is_none_or(|m| {
+            m.price[crate::economy::Good::Grain as usize] >= crate::economy::Good::Grain.base_price() * 0.6
+        });
+        if season != Season::Winter
+            && self.villages[vi].fields.len() < target
+            && (grain_sells || self.villages[vi].fields.len() < 3)
+            && self.rng.chance(0.3)
+        {
             self.new_field(vi);
         }
 
         // Maisons vides : abandon, ruine, puis la nature reprend la parcelle.
         let mut gone = Vec::new();
         let mut abandoned = Vec::new();
+        let workshops = &self.economy.workshops;
         for h in &mut self.villages[vi].houses {
             match h.state {
+                _ if workshops.contains_key(&h.id) => {}
                 HouseState::Inhabited if h.residents.is_empty() && h.reserved_for.is_none() => {
                     h.state = HouseState::Abandoned;
                     h.since = tick;
@@ -389,6 +377,18 @@ impl World {
         h.state = HouseState::Inhabited;
         h.since = tick;
         let mover = h.reserved_for.take();
+        if let Some(kind) = self.economy.workshops.get(&hid) {
+            let name = self.villages[vi].name.clone();
+            let what = kind.the();
+            let what = what[..1].to_uppercase() + &what[1..];
+            let done = if *kind == crate::economy::Workshop::Smithy {
+                "terminée"
+            } else {
+                "terminé"
+            };
+            self.event(Some(id), vec![], format!("{what} de {name} est {done}"));
+            return;
+        }
         match mover.filter(|&m| self.people[m as usize].alive() && !self.people[m as usize].brain.leaving) {
             Some(m) => self.settle_mover(vi, m, hid, true),
             None => {
@@ -407,6 +407,7 @@ impl World {
                     self.people[a as usize].children.push(c);
                     self.people[b as usize].children.push(c);
                 }
+                self.open_household(hid, 25.0, 40.0);
                 let text = format!(
                     "Une famille arrive : {} et {} {last}",
                     self.people[a as usize].first, self.people[b as usize].first
@@ -424,6 +425,19 @@ impl World {
         let partner = self.people[m as usize]
             .partner
             .filter(|&q| self.people[q as usize].alive());
+        // Les parents aident à démarrer : un peu d'argent et de quoi manger.
+        let parent_home = self.people[m as usize].home;
+        let (mut coins, mut grain) = (0.0, 0.0);
+        if let Some(ph) = parent_home
+            && ph != hid
+            && let Some(p) = self.economy.households.get_mut(&ph)
+        {
+            coins = (p.coins * 0.2).min(15.0);
+            grain = (p.inv[crate::economy::Good::Grain as usize] * 0.3).min(30.0);
+            p.coins -= coins;
+            p.inv[crate::economy::Good::Grain as usize] -= grain;
+        }
+        self.open_household(hid, coins, grain);
         self.move_in(m, hid);
         let name = self.people[m as usize].first.clone();
         let place = if built {
@@ -503,17 +517,12 @@ impl World {
         }
     }
 
-    /// Disette : une famille s'en va, et parfois ses meilleurs amis avec elle.
-    fn famine_leave(&mut self, vi: usize) {
+    /// Disette : une famille affamée s'en va, et parfois ses meilleurs amis avec elle.
+    pub(super) fn famine_leave_house(&mut self, vi: usize, hid: u32) {
         let id = self.villages[vi].id;
-        let homes: Vec<u32> = self.villages[vi]
-            .houses
-            .iter()
-            .filter(|h| h.state == HouseState::Inhabited && !h.residents.is_empty())
-            .map(|h| h.id)
-            .collect();
-        let Some(&hid) = self.rng.pick(&homes) else { return };
-        let h = self.villages[vi].house(hid).unwrap();
+        let Some(h) = self.villages[vi].house(hid) else {
+            return;
+        };
         let (family, residents) = (h.family.clone(), h.residents.clone());
         self.event(
             Some(id),
@@ -564,7 +573,7 @@ impl World {
                 matches!(
                     h.state,
                     HouseState::Abandoned | HouseState::Inhabited | HouseState::Building
-                )
+                ) && !self.economy.workshops.contains_key(&h.id)
             })
             .map(|h| h.id);
         let hid = match standing {
@@ -584,8 +593,7 @@ impl World {
         let a = self.arrive(vi, &last, true, 24.0, hid);
         let b = self.arrive(vi, &last, false, 26.0, hid);
         self.couple(a, b);
-        let st = &mut self.villages[vi].stock;
-        st.food = st.food.max(60.0);
+        self.open_household(hid, 25.0, 60.0);
         let text = format!(
             "Des pionniers s'installent : {} et {} {last}",
             self.people[a as usize].first, self.people[b as usize].first

@@ -45,13 +45,13 @@ pub const MAX_FOOD: f32 = 5_000.0;
 pub const RATION_ADULT: f32 = 1.0;
 pub const RATION_CHILD: f32 = 0.6;
 /// Récolte d'un champ (rations) pour une fertilité de 1.
-pub const FIELD_YIELD: f32 = 100.0;
+pub const FIELD_YIELD: f32 = 120.0;
 /// Jours de pousse entre semis et récolte (croissance saisonnière comprise).
 pub const FIELD_GROW_DAYS: f32 = 9.0;
 /// Part d'un champ travaillée (labour, semis, moisson) par séance de 2 h.
 pub const FIELD_WORK_PER_SESSION: f32 = 0.34;
 /// Champs visés par habitant.
-pub const FIELDS_PER_PERSON: f32 = 0.23;
+pub const FIELDS_PER_PERSON: f32 = 0.24;
 
 /// Durées des tâches.
 pub const WORK_SESSION: u64 = 2 * HOUR;

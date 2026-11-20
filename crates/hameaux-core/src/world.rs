@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     clock::Clock,
+    economy::Economy,
     events::Chronicle,
     map::{Biome, CHUNK, Map, flags},
     path::PathFinder,
@@ -71,6 +72,8 @@ pub struct World {
     /// Révision de chaque tronçon de carte (pour que le navigateur recharge ce qui a changé).
     pub chunk_rev: Vec<u64>,
     pub map_rev: u64,
+    /// Foyers, marchés, ateliers, trésors (phase 3). Toujours en dernier : voir `save.rs`.
+    pub economy: Economy,
     #[serde(skip)]
     pub caches: Scratch<Caches>,
 }
@@ -100,6 +103,7 @@ impl World {
             next_building: 1,
             chunk_rev: vec![0; chunks],
             map_rev: 0,
+            economy: Economy::default(),
             caches: Scratch::default(),
         };
         w.ensure_caches();

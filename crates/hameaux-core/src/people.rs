@@ -4,7 +4,10 @@ use std::collections::{BTreeMap, VecDeque};
 
 use serde::{Deserialize, Serialize};
 
-use crate::tuning::{ADULT_AGE, ELDER_AGE, YEAR};
+use crate::{
+    economy::Good,
+    tuning::{ADULT_AGE, ELDER_AGE, YEAR},
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Job {
@@ -12,10 +15,28 @@ pub enum Job {
     Woodcutter,
     Quarrier,
     Builder,
+    // Phase 3 (ajoutés à la fin : l'ordre est celui des sauvegardes).
+    Miller,
+    Baker,
+    Smith,
+    Fisher,
+    Hunter,
+    Miner,
 }
 
 impl Job {
-    pub const ALL: [Job; 4] = [Job::Farmer, Job::Woodcutter, Job::Quarrier, Job::Builder];
+    pub const ALL: [Job; 10] = [
+        Job::Farmer,
+        Job::Woodcutter,
+        Job::Quarrier,
+        Job::Builder,
+        Job::Miller,
+        Job::Baker,
+        Job::Smith,
+        Job::Fisher,
+        Job::Hunter,
+        Job::Miner,
+    ];
 
     pub fn label(self, female: bool) -> &'static str {
         match (self, female) {
@@ -27,6 +48,18 @@ impl Job {
             (Job::Quarrier, true) => "tailleuse de pierre",
             (Job::Builder, false) => "bâtisseur",
             (Job::Builder, true) => "bâtisseuse",
+            (Job::Miller, false) => "meunier",
+            (Job::Miller, true) => "meunière",
+            (Job::Baker, false) => "boulanger",
+            (Job::Baker, true) => "boulangère",
+            (Job::Smith, false) => "forgeron",
+            (Job::Smith, true) => "forgeronne",
+            (Job::Fisher, false) => "pêcheur",
+            (Job::Fisher, true) => "pêcheuse",
+            (Job::Hunter, false) => "chasseur",
+            (Job::Hunter, true) => "chasseuse",
+            (Job::Miner, false) => "mineur",
+            (Job::Miner, true) => "mineuse",
         }
     }
 }
@@ -38,11 +71,10 @@ pub enum Status {
     Left { tick: u64 },
 }
 
+/// Ce qu'un habitant porte.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Carry {
-    Wood,
-    Stone,
-    Food,
+    Good(Good),
     Bundle,
 }
 
@@ -68,6 +100,12 @@ pub enum Act {
     Strolling,
     Arriving,
     Leaving,
+    Fishing,
+    Hunting,
+    Mining,
+    Milling,
+    Baking,
+    Forging,
 }
 
 impl Act {
@@ -91,6 +129,12 @@ impl Act {
             Act::Strolling => "se promène",
             Act::Arriving => "arrive au village",
             Act::Leaving => "quitte le village",
+            Act::Fishing => "pêche",
+            Act::Hunting => "chasse",
+            Act::Mining => "extrait du minerai",
+            Act::Milling => "moud du grain",
+            Act::Baking => "cuit du pain",
+            Act::Forging => "forge des outils",
         }
     }
 }
@@ -98,9 +142,7 @@ impl Act {
 impl Carry {
     pub fn label(self) -> &'static str {
         match self {
-            Carry::Wood => "du bois",
-            Carry::Stone => "des pierres",
-            Carry::Food => "du grain",
+            Carry::Good(g) => g.partitive(),
             Carry::Bundle => "son baluchon",
         }
     }
@@ -115,14 +157,16 @@ pub enum Step {
         act: Act,
         with: Option<u32>,
     },
-    /// Prendre des matériaux au grenier pour un chantier.
-    Take(Carry),
-    /// Déposer au grenier ce qu'on porte.
+    /// Prendre des matériaux au grenier commun pour un chantier.
+    Take(Good),
+    /// Déposer au marché, dans les réserves de son foyer, ce qu'on porte.
     Deposit,
     Build(u32),
     FieldWork(u32),
-    Chop(u32),
-    Quarry(u32),
+    /// Récolter une ressource naturelle (bois, pierre, poisson, gibier, minerai).
+    Gather(u32, Good),
+    /// Transformer dans un atelier (moulin, four, forge).
+    Craft(u32),
     /// Entrer chez soi (dormir).
     Hide,
     /// Quitter le village pour de bon.

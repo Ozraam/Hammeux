@@ -2,20 +2,15 @@
 
 use crate::{
     clock::Season,
-    map::Biome,
+    economy::{Good, Workshop},
+    map::{Biome, Resource as MapResource},
     people::{Act, Carry, Job, Status, Step},
     settlement::{FieldState, HouseState},
     tuning::*,
     world::{Caches, World, occ},
 };
 
-use super::{DayPart, day_part, is_quarry, rest_day};
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Resource {
-    Wood,
-    Stone,
-}
+use super::{DayPart, day_part, market::resource_at, rest_day};
 
 impl World {
     pub(crate) fn update_person(&mut self, i: usize) {
@@ -117,39 +112,21 @@ impl World {
                 b.act = act;
                 b.with = with;
             }
-            Step::Take(carry) => {
+            Step::Take(good) => {
                 let st = &mut self.villages[vi].stock;
-                let got = match carry {
-                    Carry::Wood if st.wood > 0 => {
-                        let n = st.wood.min(2);
-                        st.wood -= n;
-                        n
-                    }
-                    Carry::Stone if st.stone > 0 => {
-                        let n = st.stone.min(2);
-                        st.stone -= n;
-                        n
-                    }
-                    _ => 0,
+                let pool = match good {
+                    Good::Wood => &mut st.wood,
+                    _ => &mut st.stone,
                 };
+                let got = (*pool).min(2);
+                *pool -= got;
                 if got > 0 {
                     let b = &mut self.people[i].brain;
-                    b.carry = Some(carry);
+                    b.carry = Some(Carry::Good(good));
                     b.carry_amount = got as f32;
                 }
             }
-            Step::Deposit => {
-                let b = &mut self.people[i].brain;
-                let (carry, amount) = (b.carry.take(), b.carry_amount);
-                b.carry_amount = 0.0;
-                let st = &mut self.villages[vi].stock;
-                match carry {
-                    Some(Carry::Wood) => st.wood = (st.wood + amount as u32).min(MAX_WOOD),
-                    Some(Carry::Stone) => st.stone = (st.stone + amount as u32).min(MAX_STONE),
-                    Some(Carry::Food) => st.food = (st.food + amount).min(MAX_FOOD),
-                    _ => {}
-                }
-            }
+            Step::Deposit => self.deposit(i, vi),
             Step::Build(hid) => {
                 let b = &mut self.people[i].brain;
                 let (carry, amount) = (b.carry.take(), b.carry_amount as u32);
@@ -161,37 +138,59 @@ impl World {
                     return;
                 }
                 match carry {
-                    Some(Carry::Wood) => {
+                    Some(Carry::Good(Good::Wood)) => {
                         let n = amount.min(h.wood_needed);
                         h.wood_needed -= n;
                         h.wood_in += n;
                     }
-                    Some(Carry::Stone) => {
+                    Some(Carry::Good(Good::Stone)) => {
                         let n = amount.min(h.stone_needed);
                         h.stone_needed -= n;
                         h.stone_in += n;
                     }
                     _ => return,
                 }
-                if h.wood_needed == 0 && h.stone_needed == 0 {
+                let done = h.wood_needed == 0 && h.stone_needed == 0;
+                self.pay_builder(i, vi);
+                if done {
                     self.complete_house(vi, hid);
                 }
             }
             Step::FieldWork(fid) => self.field_work(i, vi, fid),
-            Step::Chop(tile) => {
+            Step::Gather(tile, good) => {
+                let base = match good {
+                    Good::Wood => LOAD_WOOD as f32,
+                    Good::Stone => LOAD_STONE as f32,
+                    Good::Fish => {
+                        if self.map.resource[tile as usize] == MapResource::Fish as u8 {
+                            1.4
+                        } else {
+                            0.7
+                        }
+                    }
+                    Good::Meat => {
+                        if self.map.resource[tile as usize] == MapResource::Game as u8 {
+                            1.1
+                        } else {
+                            0.5
+                        }
+                    }
+                    Good::Ore => 1.5,
+                    _ => 1.0,
+                };
+                let amount = base * self.tool_bonus(i);
                 let b = &mut self.people[i].brain;
-                b.carry = Some(Carry::Wood);
-                b.carry_amount = LOAD_WOOD as f32;
+                b.carry = Some(Carry::Good(good));
+                b.carry_amount = amount;
                 let t = tile as usize;
-                if matches!(self.map.biome_at(t), Biome::Forest | Biome::Conifers) && self.rng.chance(0.12) {
+                if good == Good::Wood
+                    && matches!(self.map.biome_at(t), Biome::Forest | Biome::Conifers)
+                    && self.rng.chance(0.12)
+                {
                     self.set_biome(t, Biome::Meadow);
                 }
             }
-            Step::Quarry(_) => {
-                let b = &mut self.people[i].brain;
-                b.carry = Some(Carry::Stone);
-                b.carry_amount = LOAD_STONE as f32;
-            }
+            Step::Craft(wid) => self.craft(i, wid),
             Step::Hide => {
                 if let Some((x, y)) = self.home_tile(i) {
                     let p = &mut self.people[i];
@@ -245,8 +244,9 @@ impl World {
                     f.work = 0.0;
                     f.growth = 0.0;
                 }
+                let amount = amount * self.tool_bonus(i);
                 let b = &mut self.people[i].brain;
-                b.carry = Some(Carry::Food);
+                b.carry = Some(Carry::Good(Good::Grain));
                 b.carry_amount = amount;
             }
             _ => {}
@@ -453,47 +453,68 @@ impl World {
             return;
         }
         let vi = self.village_of(i);
-        let st = self.villages[vi].stock.clone();
         let has_stone = self.villages[vi].has_stone;
-        match self.people[i].job {
+        let stock_of = |w: &World, g: Good| w.home_household(i).map_or(0.0, |h| h.inv[g as usize]);
+        // Au-delà de ces réserves, on n'en produit plus (personne ne les achète).
+        let glut = |w: &World, g: Good| stock_of(w, g) > 60.0;
+        let job = self.people[i].job;
+        // Son métier ne rapporte presque rien et le foyer a de quoi voir venir : on se repose.
+        if let Some(j) = job
+            && j != Job::Builder
+            && self.job_value(vi, j) < 0.6
+            && self
+                .home_household(i)
+                .is_some_and(|h| h.coins > 10.0 && h.rations() > 14.0 * 3.0)
+            && self.rng.chance(0.7)
+        {
+            self.leisure(i, false);
+            return;
+        }
+        let done = match job {
             Some(Job::Builder) => {
-                if !self.build(i, vi) {
-                    let site_needs_stone = self.villages[vi]
+                self.build(i, vi) || {
+                    let st = &self.villages[vi].stock;
+                    let need_stone = self.villages[vi]
                         .houses
                         .iter()
                         .any(|h| h.state == HouseState::Building && h.stone_needed > 0);
-                    let r = if site_needs_stone && has_stone && st.stone == 0 {
-                        Resource::Stone
+                    let g = if need_stone && has_stone && st.stone == 0 {
+                        Good::Stone
                     } else {
-                        Resource::Wood
+                        Good::Wood
                     };
-                    self.gather(i, vi, r);
+                    self.gather(i, vi, g)
                 }
             }
-            Some(Job::Woodcutter) if st.wood < MAX_WOOD => self.gather(i, vi, Resource::Wood),
-            Some(Job::Quarrier) if has_stone && st.stone < MAX_STONE => self.gather(i, vi, Resource::Stone),
-            Some(Job::Farmer) | Some(Job::Woodcutter) | Some(Job::Quarrier) => {
-                if !self.farm(i, vi) {
-                    if st.wood < MAX_WOOD {
-                        self.gather(i, vi, Resource::Wood)
-                    } else {
-                        self.leisure(i, false)
-                    }
-                }
+            Some(Job::Woodcutter) if !glut(self, Good::Wood) => self.gather(i, vi, Good::Wood),
+            Some(Job::Quarrier) if has_stone && !glut(self, Good::Stone) => self.gather(i, vi, Good::Stone),
+            Some(Job::Fisher) if !glut(self, Good::Fish) => self.gather(i, vi, Good::Fish),
+            Some(Job::Hunter) if !glut(self, Good::Meat) => self.gather(i, vi, Good::Meat),
+            Some(Job::Miner) if !glut(self, Good::Ore) => self.gather(i, vi, Good::Ore),
+            Some(Job::Miller) => self.workshop_work(i, vi, Workshop::Mill),
+            Some(Job::Baker) => self.workshop_work(i, vi, Workshop::Bakery),
+            Some(Job::Smith) => self.workshop_work(i, vi, Workshop::Smithy),
+            Some(Job::Farmer) => self.farm(i, vi),
+            _ => false,
+        };
+        if !done {
+            // Rien à faire dans son métier : on aide aux champs, sinon on coupe du bois.
+            let ok = self.farm(i, vi) || (!glut(self, Good::Wood) && self.gather(i, vi, Good::Wood));
+            if !ok {
+                self.leisure(i, false);
             }
-            None => self.gather(i, vi, Resource::Wood),
         }
     }
 
     /// Une ressource proche du village (bois ou pierre) et la case d'où la travailler.
-    fn find_resource(&mut self, vi: usize, r: Resource) -> Option<(u32, u32)> {
+    fn find_resource(&mut self, vi: usize, r: Good) -> Option<(u32, u32)> {
         // D'abord près du village, puis plus loin si rien n'est trouvé.
         self.find_resource_within(vi, r, RESOURCE_RADIUS as i64)
             .or_else(|| self.find_resource_within(vi, r, RESOURCE_RADIUS as i64 * 2))
             .or_else(|| self.find_resource_within(vi, r, RESOURCE_RADIUS as i64 * 3))
     }
 
-    fn find_resource_within(&mut self, vi: usize, r: Resource, rad: i64) -> Option<(u32, u32)> {
+    fn find_resource_within(&mut self, vi: usize, r: Good, rad: i64) -> Option<(u32, u32)> {
         let (cx, cy) = (self.villages[vi].x as i64, self.villages[vi].y as i64);
         let mut best: Option<(f32, u32, u32)> = None;
         for _ in 0..90 {
@@ -502,24 +523,24 @@ impl World {
                 continue;
             }
             let t = self.map.idx(x as u32, y as u32);
-            let ok = match r {
-                Resource::Wood => matches!(self.map.biome_at(t), Biome::Forest | Biome::Conifers),
-                Resource::Stone => is_quarry(&self.map, t),
-            };
-            if !ok {
+            if !resource_at(&self.map, t, r) {
                 continue;
             }
-            let stand = [(0, 1), (1, 0), (-1, 0), (0, -1), (0, 0)]
-                .into_iter()
-                .find_map(|(dx, dy)| {
-                    let (sx, sy) = (x + dx, y + dy);
-                    if !self.map.inside(sx, sy) {
-                        return None;
-                    }
-                    let s = self.map.idx(sx as u32, sy as u32);
-                    (self.map.walk_cost(s).is_some() && matches!(self.occ(s), occ::NONE | occ::FIELD))
-                        .then_some(s)
-                });
+            // On pêche depuis la rive ; ailleurs on se tient sur la case ou à côté.
+            let around: &[(i64, i64)] = if r == Good::Fish {
+                &[(0, 1), (1, 0), (-1, 0), (0, -1)]
+            } else {
+                &[(0, 1), (1, 0), (-1, 0), (0, -1), (0, 0)]
+            };
+            let stand = around.iter().copied().into_iter().find_map(|(dx, dy)| {
+                let (sx, sy) = (x + dx, y + dy);
+                if !self.map.inside(sx, sy) {
+                    return None;
+                }
+                let s = self.map.idx(sx as u32, sy as u32);
+                (self.map.walk_cost(s).is_some() && matches!(self.occ(s), occ::NONE | occ::FIELD))
+                    .then_some(s)
+            });
             let Some(stand) = stand else { continue };
             let d = (((x - cx).pow(2) + (y - cy).pow(2)) as f32).sqrt() + self.rng.f32() * 6.0;
             if best.is_none_or(|b| d < b.0) {
@@ -529,14 +550,17 @@ impl World {
         best.map(|(_, t, s)| (t, s))
     }
 
-    fn gather(&mut self, i: usize, vi: usize, r: Resource) {
+    /// Va chercher une ressource et la rapporte au marché. Faux si rien n'est à portée.
+    fn gather(&mut self, i: usize, vi: usize, r: Good) -> bool {
         let Some((res, stand)) = self.find_resource(vi, r) else {
-            self.plan(i, [Self::wait(20 * MINUTE, Act::Idle)]);
-            return;
+            return false;
         };
-        let (act, take) = match r {
-            Resource::Wood => (Act::Chopping, Step::Chop(res)),
-            Resource::Stone => (Act::Quarrying, Step::Quarry(res)),
+        let act = match r {
+            Good::Wood => Act::Chopping,
+            Good::Stone => Act::Quarrying,
+            Good::Fish => Act::Fishing,
+            Good::Meat => Act::Hunting,
+            _ => Act::Mining,
         };
         let door = self.villages[vi].door();
         let door = self.map.idx(door.0, door.1) as u32;
@@ -546,11 +570,54 @@ impl World {
             [
                 Step::Go(stand),
                 Self::wait(session, act),
-                take,
+                Step::Gather(res, r),
                 Step::Go(door),
                 Step::Deposit,
             ],
         );
+        true
+    }
+
+    /// Travail à l'atelier de son métier (moulin, four, forge). Faux s'il n'existe pas encore.
+    fn workshop_work(&mut self, i: usize, vi: usize, kind: Workshop) -> bool {
+        let v = &self.villages[vi];
+        let shop = v
+            .houses
+            .iter()
+            .find(|h| h.state == HouseState::Inhabited && self.economy.workshops.get(&h.id) == Some(&kind));
+        let Some(h) = shop else { return false };
+        let (wid, tile) = (h.id, self.map.idx(h.x, h.y) as u32);
+        // Personne n'achète ce qu'on a déjà produit : inutile d'en faire plus.
+        let output = match kind {
+            Workshop::Mill => Good::Flour,
+            Workshop::Bakery => Good::Bread,
+            Workshop::Smithy => Good::Tools,
+        };
+        let limit = if kind == Workshop::Smithy { 6.0 } else { 60.0 };
+        if self
+            .home_household(i)
+            .is_some_and(|h| h.inv[output as usize] > limit)
+        {
+            return false;
+        }
+        let act = match kind {
+            Workshop::Mill => Act::Milling,
+            Workshop::Bakery => Act::Baking,
+            Workshop::Smithy => Act::Forging,
+        };
+        self.plan(
+            i,
+            [
+                Step::Go(tile),
+                Step::Wait {
+                    ticks: WORK_SESSION,
+                    act,
+                    with: Some(wid),
+                },
+                Step::Craft(wid),
+            ],
+        );
+        true
     }
 
     fn build(&mut self, i: usize, vi: usize) -> bool {
@@ -562,9 +629,9 @@ impl World {
             .find(|h| (h.stone_needed > 0 && v.stock.stone > 0) || (h.wood_needed > 0 && v.stock.wood > 0));
         let Some(h) = site else { return false };
         let mat = if h.stone_needed > 0 && v.stock.stone > 0 {
-            Carry::Stone
+            Good::Stone
         } else {
-            Carry::Wood
+            Good::Wood
         };
         let (hid, tile) = (h.id, self.map.idx(h.x, h.y) as u32);
         let door = v.door();
@@ -599,6 +666,7 @@ impl World {
         };
         let todo = match season {
             Season::Winter => Vec::new(),
+            // Une seule récolte par an : on laboure et sème au printemps.
             Season::Spring => {
                 let ripe = pick(&[FieldState::Ripe]);
                 if ripe.is_empty() {
@@ -611,8 +679,6 @@ impl World {
                 let ripe = pick(&[FieldState::Ripe]);
                 if !ripe.is_empty() {
                     ripe
-                } else if self.clock().day <= 3 {
-                    pick(&[FieldState::Fallow, FieldState::Ploughed])
                 } else if self.rng.chance(0.3) {
                     pick(&[FieldState::Sown])
                 } else {

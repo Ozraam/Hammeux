@@ -117,6 +117,9 @@ export class Panel {
         <dt>Naissance</dt><dd>${esc(p.born)}</dd>
         ${p.master ? `<dt>Apprenti${p.female ? "e" : ""} de</dt><dd>${link(p.master)}</dd>` : ""}
       </dl>
+      ${p.household ? `<h3>Son foyer</h3>
+        <p>${money(p.household.coins)} · ${Math.round(p.household.food_days)} jours de vivres${p.household.hungry ? ` · <b class="warn">a faim</b>` : ""}</p>
+        <p class="muted">${p.household.goods.map((g) => `${qty(g.amount)} ${esc(g.label)}`).join(" · ") || "réserves vides"}</p>` : ""}
       <h3>Famille</h3>${list(p.family)}
       <h3>Amis</h3>${list(p.friends)}
       <h3>Sa vie</h3>${this.eventsHtml(p.events, false)}
@@ -135,9 +138,22 @@ export class Panel {
         <dt>Métiers</dt><dd>${jobs || "—"}</dd>
         <dt>Maisons</dt><dd>${v.houses} habitées${v.sites ? `, ${v.sites} en chantier` : ""}${v.ruins ? `, ${v.ruins} en ruine` : ""}</dd>
         <dt>Champs</dt><dd>${v.fields}${v.fields_ripe ? ` (${v.fields_ripe} prêts à moissonner)` : ""}</dd>
-        <dt>Grenier</dt><dd>${Math.round(v.food)} rations (${v.food_days} jours)${v.hungry ? ` <b class="warn">disette</b>` : ""}</dd>
-        <dt>Matériaux</dt><dd>${v.wood} bois · ${v.has_stone ? `${v.stone} pierre` : "pas de carrière"}</dd>
+        <dt>Vivres</dt><dd>${v.food_days} jours (grenier commun : ${Math.round(v.food)} rations)${v.hungry ? ` <b class="warn">disette</b>` : ""}</dd>
+        <dt>Chantiers</dt><dd>${v.wood} bois · ${v.has_stone ? `${v.stone} pierre` : "pas de carrière"}</dd>
+        <dt>Caisse</dt><dd>${money(v.treasury)}</dd>
+        <dt>Ateliers</dt><dd>${v.workshops.length ? v.workshops.map(esc).join(", ") : "aucun"}</dd>
       </dl>
+      <h3>Marché</h3>
+      <table class="market">
+        <tr><th></th><th>prix</th><th>7 j</th><th>vendu</th></tr>
+        ${v.market
+          .map((r) => {
+            const change = r.week_ago > 0 ? r.price / r.week_ago - 1 : 0;
+            const arrow = change > 0.05 ? `<span class="up">▲</span>` : change < -0.05 ? `<span class="down">▼</span>` : "";
+            return `<tr><td>${esc(r.label)}</td><td class="num">${r.price.toFixed(2)} ${arrow}</td><td>${spark(r.history)}</td><td class="num muted">${r.volume >= 0.5 ? Math.round(r.volume) : "—"}</td></tr>`;
+          })
+          .join("")}
+      </table>
       <h3>Derniers événements</h3>${this.eventsHtml(v.events, false)}
     `;
   }
@@ -187,6 +203,24 @@ export class Chronicle {
       this.loading = false;
     }
   }
+}
+
+function money(c: number) {
+  return `${Math.round(c)} sou${Math.round(c) > 1 ? "s" : ""}`;
+}
+
+function qty(n: number) {
+  return n >= 10 ? Math.round(n).toString() : n.toFixed(1).replace(".0", "");
+}
+
+/** Petite courbe des prix (SVG). */
+function spark(values: number[]): string {
+  if (values.length < 2) return "";
+  const w = 64, h = 16;
+  const min = Math.min(...values), max = Math.max(...values);
+  const span = max - min || 1;
+  const pts = values.map((v, i) => `${((i / (values.length - 1)) * w).toFixed(1)},${(h - 1 - ((v - min) / span) * (h - 2)).toFixed(1)}`);
+  return `<svg class="spark" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><polyline points="${pts.join(" ")}" /></svg>`;
 }
 
 function cap(s: string) {

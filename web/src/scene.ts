@@ -7,7 +7,19 @@ const LERP_MS = 260;
 
 const ROOFS = [0xb5523b, 0x8e3b2f, 0x6b4c3b, 0x9c6b3e, 0x7a5a8a, 0x4f6d7a];
 const SHIRTS = [0xd94f3d, 0x3d6fd9, 0xe0b13a, 0x4caf6b, 0x8e5fc2, 0xe07b39, 0x2fa7a7, 0xf2f2f2];
-const CARRY = [0, 0x8a5a2b, 0x9e9e9e, 0xe6c35c, 0x6b4f3a];
+/** Couleur de ce qui est porté : index du bien + 1 (voir `Good`), 255 = baluchon. */
+const CARRY: Record<number, number> = {
+  1: 0xe6c35c, // grain
+  2: 0xf2ead8, // farine
+  3: 0xc98a3d, // pain
+  4: 0x7fb3d5, // poisson
+  5: 0xa8433a, // viande
+  6: 0x8a5a2b, // bois
+  7: 0x9e9e9e, // pierre
+  8: 0x5b4a45, // minerai
+  9: 0x6e7f8a, // outils
+  255: 0x6b4f3a, // baluchon
+};
 /** `act` : index de `Act` côté Rust. */
 const ACT_CHATTING = 13;
 
@@ -110,6 +122,10 @@ export class SceneLayer {
     }
     for (const h of scene.houses) {
       const { x, y } = h;
+      if (h.kind > 0 && h.state !== 0) {
+        this.drawWorkshop(g, h.kind, x, y);
+        continue;
+      }
       const roof = ROOFS[h.roof % ROOFS.length];
       const door = this.villageColor.get(h.village) ?? 0x5a3a20;
       switch (h.state) {
@@ -142,6 +158,35 @@ export class SceneLayer {
           g.circle(x + 0.65, y + 0.5, 0.25).fill(0x5d9a46);
           g.rect(x + 0.2, y + 0.75, 0.25, 0.15).fill(0x9a917f);
       }
+    }
+  }
+
+  /** Moulin (ailes), four à pain (cheminée qui fume), forge (toit sombre, braises). */
+  private drawWorkshop(g: Graphics, kind: number, x: number, y: number) {
+    switch (kind) {
+      case 1: {
+        g.rect(x + 0.3, y + 0.35, 0.4, 0.58).fill(0xe8d9b5).stroke({ color: 0x5a4632, width: 0.06 });
+        g.poly([x + 0.25, y + 0.38, x + 0.5, y + 0.15, x + 0.75, y + 0.38]).fill(0x8e3b2f);
+        const cx = x + 0.5, cy = y + 0.3;
+        for (let k = 0; k < 4; k++) {
+          const a = (k * Math.PI) / 2 + Math.PI / 4;
+          g.moveTo(cx, cy).lineTo(cx + Math.cos(a) * 0.45, cy + Math.sin(a) * 0.45);
+        }
+        g.stroke({ color: 0x5a3a20, width: 0.08 });
+        break;
+      }
+      case 2:
+        g.rect(x + 0.12, y + 0.38, 0.76, 0.55).fill(0xd8c3a0).stroke({ color: 0x5a4632, width: 0.06 });
+        g.poly([x + 0.06, y + 0.42, x + 0.5, y + 0.12, x + 0.94, y + 0.42]).fill(0x9c6b3e);
+        g.rect(x + 0.66, y + 0.08, 0.14, 0.24).fill(0x6b4c3b);
+        g.circle(x + 0.73, y - 0.02, 0.1).fill({ color: 0xdddddd, alpha: 0.7 });
+        g.roundRect(x + 0.35, y + 0.6, 0.3, 0.25, 0.12).fill(0x3a2615);
+        break;
+      default:
+        g.rect(x + 0.1, y + 0.4, 0.8, 0.53).fill(0x8a8378).stroke({ color: 0x3a3632, width: 0.06 });
+        g.poly([x + 0.05, y + 0.44, x + 0.5, y + 0.14, x + 0.95, y + 0.44]).fill(0x4a4a4f);
+        g.rect(x + 0.35, y + 0.62, 0.3, 0.31).fill(0x2a1a10);
+        g.circle(x + 0.5, y + 0.82, 0.08).fill(0xff8a3d);
     }
   }
 

@@ -8,4 +8,8 @@ state: number,
 /**
  * Avancement du chantier, 0–1.
  */
-progress: number, roof: number, family: string, };
+progress: number, roof: number, family: string, 
+/**
+ * 0 maison, 1 moulin, 2 four à pain, 3 forge.
+ */
+kind: number, };

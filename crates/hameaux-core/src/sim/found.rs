@@ -44,6 +44,7 @@ impl World {
             has_stone,
         });
         let vi = self.villages.len() - 1;
+        self.compute_access(vi);
         let families = 4 + self.rng.below(2) as usize;
         for _ in 0..families {
             if let Some(h) = self.new_house(vi, HouseState::Inhabited) {
@@ -56,7 +57,8 @@ impl World {
         for _ in 0..fields {
             self.new_field(vi);
         }
-        self.villages[vi].stock.food = pop as f32 * 35.0;
+        // Le grenier commun garde une petite réserve ; chaque foyer a ses provisions.
+        self.villages[vi].stock.food = pop as f32 * 5.0;
         self.event(
             Some(id),
             vec![],
@@ -302,6 +304,13 @@ impl World {
         if let Some(h) = self.villages[vi].house_mut(house) {
             h.family = last;
         }
+        // Provisions de départ : un mois de grain et un peu d'argent.
+        let members = 2 + kids as usize;
+        self.open_household(
+            house,
+            30.0,
+            members as f32 * 30.0 / crate::economy::Good::Grain.ration(),
+        );
     }
 
     /// Crée un habitant d'un âge donné (en années), chez lui s'il a une maison.
@@ -386,7 +395,8 @@ impl World {
         self.people[b as usize].partner = Some(a);
     }
 
-    /// Métier : souvent celui d'un parent, sinon celui qui manque le plus au village.
+    /// Métier : celui qui rapporte le plus au village (revenus récents), souvent celui d'un
+    /// parent, parmi ceux qui sont possibles (atelier construit, ressource à portée).
     pub(crate) fn pick_job(&mut self, id: u32) -> Job {
         let p = &self.people[id as usize];
         let parent_jobs: Vec<Job> = p
@@ -394,41 +404,20 @@ impl World {
             .iter()
             .filter_map(|&q| self.people[q as usize].job)
             .collect();
-        if !parent_jobs.is_empty() && self.rng.chance(0.6) {
-            return *self.rng.pick(&parent_jobs).unwrap();
-        }
-        let village = p.village;
-        let has_stone = self
-            .village_index(village)
-            .is_some_and(|vi| self.villages[vi].has_stone);
-        let adults: Vec<Job> = self
-            .alive()
-            .filter(|q| q.village == village && q.id != id)
-            .filter_map(|q| q.job)
-            .collect();
-        let n = adults.len() as f32 + 1.0;
-        let want = |j: Job| -> f32 {
-            match j {
-                Job::Builder => 1.0 + (n / 15.0).floor(),
-                Job::Farmer => (n * 0.4).ceil(),
-                Job::Woodcutter => (n * 0.25).ceil(),
-                Job::Quarrier => {
-                    if has_stone {
-                        (n * 0.15).ceil()
-                    } else {
-                        0.0
-                    }
-                }
-            }
+        let Some(vi) = self.village_index(p.village) else {
+            return Job::Farmer;
         };
-        Job::ALL
-            .into_iter()
-            .max_by(|&a, &b| {
-                let ga = want(a) - adults.iter().filter(|&&j| j == a).count() as f32;
-                let gb = want(b) - adults.iter().filter(|&&j| j == b).count() as f32;
-                ga.total_cmp(&gb)
-            })
-            .unwrap()
+        self.economy.ensure_village(vi);
+        let options = self.feasible_jobs(vi, Some(id));
+        let mut best = (f32::MIN, Job::Farmer);
+        for j in options {
+            let family = if parent_jobs.contains(&j) { 1.4 } else { 1.0 };
+            let score = self.job_value(vi, j) * family * (0.8 + 0.4 * self.rng.f32());
+            if score > best.0 {
+                best = (score, j);
+            }
+        }
+        best.1
     }
 }
 

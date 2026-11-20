@@ -6,6 +6,7 @@
 
 mod found;
 mod life;
+mod market;
 mod tasks;
 
 pub(crate) use found::is_quarry;
@@ -60,8 +61,16 @@ impl World {
             match clock.hour {
                 6 => self.wake_up(),
                 7 | 18 | 21 => self.reset_plans(),
+                11 => self.market_day(),
                 12 => self.meals(),
-                0 => self.daily(),
+                0 => {
+                    if clock.season == Season::Winter && clock.day == 1 {
+                        self.winter_rot();
+                    }
+                    self.update_incomes();
+                    self.reconsider_jobs();
+                    self.daily();
+                }
                 _ => {}
             }
         }
@@ -137,6 +146,30 @@ impl World {
             p.brain.path_pos = 0;
             p.brain.wait = 0;
             p.brain.carry = None;
+        }
+    }
+
+    /// Début de l'hiver : ce qui n'a pas été moissonné pourrit sur pied.
+    fn winter_rot(&mut self) {
+        for vi in 0..self.villages.len() {
+            let mut lost = 0;
+            for f in &mut self.villages[vi].fields {
+                if f.state == FieldState::Ripe {
+                    f.state = FieldState::Fallow;
+                    f.work = 0.0;
+                    f.growth = 0.0;
+                    lost += 1;
+                }
+            }
+            if lost > 0 {
+                let (id, name) = (self.villages[vi].id, self.villages[vi].name.clone());
+                let s = if lost > 1 { "s" } else { "" };
+                self.event(
+                    Some(id),
+                    vec![],
+                    format!("À {name}, {lost} champ{s} non moissonné{s} pourri{s} sur pied"),
+                );
+            }
         }
     }
 
