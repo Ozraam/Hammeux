@@ -74,8 +74,10 @@ pub struct World {
     pub map_rev: u64,
     /// Foyers, marchés, ateliers, trésors (phase 3).
     pub economy: Economy,
-    /// Marchands, routes, nouvelles des prix (phase 5). Toujours en dernier : voir `save.rs`.
+    /// Marchands, routes, nouvelles des prix (phase 5).
     pub trade: crate::trade::Trade,
+    /// Chefs, justice, fêtes, maladies, savoirs (phase 6). Toujours en dernier : voir `save.rs`.
+    pub society: crate::society::Society,
     #[serde(skip)]
     pub caches: Scratch<Caches>,
 }
@@ -107,6 +109,7 @@ impl World {
             map_rev: 0,
             economy: Economy::default(),
             trade: Default::default(),
+            society: Default::default(),
             caches: Scratch::default(),
         };
         w.ensure_caches();

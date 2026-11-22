@@ -46,6 +46,16 @@ impl World {
                     n.leisure += 0.06;
                 }
                 Act::Playing | Act::Strolling => n.leisure += 0.08,
+                Act::Feasting => {
+                    n.company += 0.1;
+                    n.leisure += 0.12;
+                    n.meaning += 0.01;
+                    m.mood.joy = (m.mood.joy + 0.02).min(1.0);
+                }
+                Act::Ill => {
+                    n.sleep += 0.004;
+                    m.mood.sadness = (m.mood.sadness + 0.004).min(1.0);
+                }
                 Act::Learning => n.company += 0.03,
                 Act::Idle if !hidden => {
                     n.leisure += 0.02;
@@ -503,6 +513,7 @@ impl World {
             let village = a.village;
             self.event(Some(village), vec![idi, idj], text);
         }
+        self.maybe_brawl(i, j);
     }
 
     // ------------------------------------------------------------------ grands moments
@@ -850,7 +861,7 @@ pub struct MindStats {
     /// … qui sont allés voir quelqu'un.
     pub social: f32,
     /// … pour chaque intention (voir [`INTENT_LABELS`]).
-    pub intents: [f32; 11],
+    pub intents: [f32; 12],
     /// … à chaque niveau dans leur métier (voir [`LEVEL_LABELS`]).
     pub levels: [f32; 4],
 }
@@ -867,7 +878,7 @@ pub fn skill_level(s: f32) -> usize {
     }
 }
 
-pub const INTENT_LABELS: [&str; 11] = [
+pub const INTENT_LABELS: [&str; 12] = [
     "aucune",
     "dormir",
     "travailler",
@@ -879,6 +890,7 @@ pub const INTENT_LABELS: [&str; 11] = [
     "repos",
     "jouer",
     "partir",
+    "fête",
 ];
 
 fn intent_index(i: Intent) -> usize {
@@ -894,6 +906,7 @@ fn intent_index(i: Intent) -> usize {
         Intent::Rest => 8,
         Intent::Play => 9,
         Intent::Leave => 10,
+        Intent::Feast => 11,
     }
 }
 

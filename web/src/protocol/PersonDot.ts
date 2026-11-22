@@ -19,4 +19,8 @@ carry: number,
 /**
  * Vêtement, peau, cheveux.
  */
-looks: [number, number, number], };
+looks: [number, number, number], 
+/**
+ * Malade.
+ */
+sick: boolean, };

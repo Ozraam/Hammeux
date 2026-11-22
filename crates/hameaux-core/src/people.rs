@@ -116,6 +116,9 @@ pub enum Act {
     Forging,
     Travelling,
     Trading,
+    // Phase 6 (ajoutés à la fin : l'index est envoyé au navigateur).
+    Feasting,
+    Ill,
 }
 
 impl Act {
@@ -147,6 +150,8 @@ impl Act {
             Act::Forging => "forge des outils",
             Act::Travelling => "voyage",
             Act::Trading => "attend le marché",
+            Act::Feasting => "fait la fête",
+            Act::Ill => "est malade, alité",
         }
     }
 }
@@ -182,6 +187,8 @@ pub enum Step {
     Craft(u32),
     /// Conversation avec quelqu'un (à la fin d'une discussion).
     Talk(u32),
+    /// À la fête : parler avec celui qui est le plus près.
+    Mingle,
     /// Entrer chez soi (dormir).
     Hide,
     /// Dormir là où l'on est (à l'auberge d'un autre village).
@@ -232,6 +239,8 @@ pub enum Intent {
     Rest,
     Play,
     Leave,
+    /// Aller à la fête (ou à la foire) du village.
+    Feast,
 }
 
 impl Intent {
@@ -257,6 +266,7 @@ impl Intent {
             Intent::Rest => "se repose",
             Intent::Play => "joue",
             Intent::Leave => "s'en va",
+            Intent::Feast => "va à la fête",
         }
     }
 }

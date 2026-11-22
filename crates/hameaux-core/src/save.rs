@@ -20,7 +20,8 @@ pub const MAGIC: &[u8; 4] = b"HAMX";
 /// remplace ses amitiés.
 /// 6 : + commerce (marchands, routes, nouvelles), ajouté à la fin ; tableaux par métier de
 /// longueur libre (un nouveau métier ne casse plus les sauvegardes).
-pub const SAVE_VERSION: u32 = 6;
+/// 7 : + société (chefs, justice, fêtes, maladies, savoirs), ajoutée à la fin.
+pub const SAVE_VERSION: u32 = 7;
 
 /// Métiers connus jusqu'à la version 5.
 const JOBS_V5: usize = 10;
@@ -229,6 +230,24 @@ impl PersonV5 {
     }
 }
 
+/// Monde de la phase 5 : celui d'aujourd'hui sans la société.
+#[derive(Deserialize)]
+#[cfg_attr(test, derive(serde::Serialize))]
+struct WorldV6 {
+    seed: u64,
+    tick: u64,
+    map: Map,
+    villages: Vec<crate::settlement::Village>,
+    people: Vec<crate::people::Person>,
+    chronicle: crate::events::Chronicle,
+    rng: crate::rng::Rng,
+    next_building: u32,
+    chunk_rev: Vec<u64>,
+    map_rev: u64,
+    economy: crate::economy::Economy,
+    trade: crate::trade::Trade,
+}
+
 /// Monde de la phase 4 : sans commerce.
 #[derive(Deserialize)]
 #[cfg_attr(test, derive(serde::Serialize))]
@@ -347,12 +366,14 @@ pub fn decode(bytes: &[u8]) -> Result<Loaded, SaveError> {
                 map_rev: v.map_rev,
                 economy: Default::default(),
                 trade: Default::default(),
+                society: Default::default(),
                 caches: Default::default(),
             };
             w.ensure_caches();
             w.bootstrap_economy();
             w.bootstrap_minds(friends);
             w.bootstrap_trade();
+            w.bootstrap_society();
             Ok(Loaded::Current(w))
         }
         4 => {
@@ -371,11 +392,13 @@ pub fn decode(bytes: &[u8]) -> Result<Loaded, SaveError> {
                 map_rev: v.map_rev,
                 economy: v.economy.upgrade(),
                 trade: Default::default(),
+                society: Default::default(),
                 caches: Default::default(),
             };
             w.ensure_caches();
             w.bootstrap_minds(friends);
             w.bootstrap_trade();
+            w.bootstrap_society();
             Ok(Loaded::Current(w))
         }
         5 => {
@@ -393,10 +416,34 @@ pub fn decode(bytes: &[u8]) -> Result<Loaded, SaveError> {
                 map_rev: v.map_rev,
                 economy: v.economy.upgrade(),
                 trade: Default::default(),
+                society: Default::default(),
                 caches: Default::default(),
             };
             w.ensure_caches();
             w.bootstrap_trade();
+            w.bootstrap_society();
+            Ok(Loaded::Current(w))
+        }
+        6 => {
+            let v: WorldV6 = postcard::from_bytes(&raw)?;
+            let mut w = World {
+                seed: v.seed,
+                tick: v.tick,
+                map: std::sync::Arc::new(v.map),
+                villages: v.villages,
+                people: v.people,
+                chronicle: v.chronicle,
+                rng: v.rng,
+                next_building: v.next_building,
+                chunk_rev: v.chunk_rev,
+                map_rev: v.map_rev,
+                economy: v.economy,
+                trade: v.trade,
+                society: Default::default(),
+                caches: Default::default(),
+            };
+            w.ensure_caches();
+            w.bootstrap_society();
             Ok(Loaded::Current(w))
         }
         _ => {
@@ -593,6 +640,42 @@ pub(crate) mod tests {
             chunk_rev: w.chunk_rev.clone(),
             map_rev: w.map_rev,
             economy: economy_v5(&w.economy),
+        }
+    }
+
+    /// Une sauvegarde de la phase 5 est reprise : mêmes habitants et commerce, une société
+    /// neuve (chaque village élit bientôt son chef).
+    #[test]
+    fn reads_v6() {
+        let w = sample();
+        let v6 = WorldV6 {
+            seed: w.seed,
+            tick: w.tick,
+            map: (*w.map).clone(),
+            villages: w.villages.clone(),
+            people: w.people.clone(),
+            chronicle: w.chronicle.clone(),
+            rng: w.rng.clone(),
+            next_building: w.next_building,
+            chunk_rev: w.chunk_rev.clone(),
+            map_rev: w.map_rev,
+            economy: w.economy.clone(),
+            trade: w.trade.clone(),
+        };
+        let raw = postcard::to_stdvec(&v6).unwrap();
+        let mut bytes = MAGIC.to_vec();
+        bytes.extend_from_slice(&6u32.to_le_bytes());
+        bytes.extend_from_slice(&zstd::encode_all(&raw[..], 3).unwrap());
+        match decode(&bytes).unwrap() {
+            Loaded::Current(back) => {
+                assert_eq!(back.tick, w.tick);
+                assert_eq!(back.economy, w.economy);
+                assert_eq!(back.people.len(), w.people.len());
+                let p = back.society.polity(back.villages[0].id).unwrap();
+                assert!(p.chief.is_none_or(|c| back.people[c as usize].alive()));
+                assert!(back.society.sick.is_empty());
+            }
+            other => panic!("{other:?}"),
         }
     }
 

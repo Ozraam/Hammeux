@@ -295,6 +295,15 @@ pub enum MemoryKind {
     GoalReached,
     Heartbreak,
     Apprenticed,
+    // Phase 6.
+    Elected,
+    Robbed,
+    Fight,
+    Judged,
+    Feast,
+    Sick,
+    Invented,
+    Banished,
 }
 
 /// Nombre maximal de souvenirs gardés (les plus faibles s'effacent d'abord).
@@ -333,6 +342,14 @@ impl Memory {
             MemoryKind::GoalReached => "Un rêve réalisé".into(),
             MemoryKind::Heartbreak => format!("Son amour déçu pour {who}"),
             MemoryKind::Apprenticed => format!("Son apprentissage auprès de {who}"),
+            MemoryKind::Elected => "Le jour où le village l'a choisi{e} pour chef".into(),
+            MemoryKind::Robbed => format!("{who} l'a volé{e}"),
+            MemoryKind::Fight => format!("Une bagarre avec {who}"),
+            MemoryKind::Judged => format!("Le jugement rendu par {who}"),
+            MemoryKind::Feast => "Une belle fête au village".into(),
+            MemoryKind::Sick => "Sa guérison après une maladie".into(),
+            MemoryKind::Invented => "Sa découverte".into(),
+            MemoryKind::Banished => "Son bannissement".into(),
         }
     }
 }

@@ -58,7 +58,7 @@ fn main() {
             let mut seen = world.chronicle.next_seq;
             // Part des adultes au travail / en visite, relevée à 10 h et 15 h.
             let (mut working, mut social, mut samples) = (0.0f32, 0.0f32, 0.0f32);
-            let mut intents = [0.0f32; 11];
+            let mut intents = [0.0f32; 12];
             let mut intent_samples = 0.0f32;
             for day in 1..=days {
                 for _ in 0..TICKS_PER_DAY {
@@ -210,6 +210,7 @@ fn main() {
                     .collect();
                 println!("  {:<20} {}", v.name, row.join(" "));
             }
+            society(&world);
             println!("— événements par type —");
             let mut kinds: Vec<_> = tally.into_iter().collect();
             kinds.sort_by_key(|k| std::cmp::Reverse(k.1));
@@ -223,6 +224,75 @@ fn main() {
             }
         }
         _ => usage(),
+    }
+}
+
+/// Bilan de la vie collective : chefs, taxes, justice, fêtes, maladies, savoirs.
+fn society(world: &World) {
+    use hameaux_core::society::{Disease, Tech};
+    let s = &world.society.stats;
+    let deaths: u32 = s.deaths.iter().sum();
+    println!(
+        "— société — {} élections ({} destitutions) · {} vols, {} bagarres → {} amendes ({:.0} sous), {} pardons, {} bannis, {} impunis · {} fêtes, {} foires",
+        s.elections,
+        s.deposed,
+        s.thefts,
+        s.brawls,
+        s.fines,
+        s.fined,
+        s.pardons,
+        s.banished,
+        s.unpunished,
+        s.feasts,
+        s.fairs
+    );
+    let cases: Vec<String> = Disease::ALL
+        .iter()
+        .map(|&d| {
+            format!(
+                "{} {} cas / {} morts",
+                d.label(),
+                s.cases[d as usize],
+                s.deaths[d as usize]
+            )
+        })
+        .collect();
+    println!(
+        "  maladies : {} · {} épidémies · {deaths} morts en tout · {} malade(s) aujourd'hui",
+        cases.join(" · "),
+        s.epidemics,
+        world.society.sick.len()
+    );
+    println!(
+        "  savoirs : {} découvertes, {} transmissions",
+        s.inventions, s.spread
+    );
+    for v in &world.villages {
+        let Some(p) = world.society.polity(v.id) else {
+            continue;
+        };
+        let chief = p
+            .chief
+            .map(|c| world.people[c as usize].name())
+            .unwrap_or_else(|| "—".into());
+        let techs: Vec<&str> = Tech::ALL
+            .iter()
+            .filter(|&&t| p.knows(t))
+            .map(|t| t.label())
+            .collect();
+        println!(
+            "  {:<22} chef {:<22} ({} chefs) · conseil {} · taxe {:>2.0} % · {}",
+            v.name,
+            chief,
+            p.chiefs,
+            p.council.len(),
+            p.tax * 100.0,
+            if techs.is_empty() {
+                "—".to_string()
+            } else {
+                techs.join(", ")
+            }
+        );
     }
 }
 

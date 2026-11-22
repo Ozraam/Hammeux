@@ -13,8 +13,6 @@ use crate::{
     world::World,
 };
 
-/// Taxe prélevée sur chaque vente (et sur les récoltes, en nature, pour le grenier commun).
-const TAX: f32 = 0.10;
 /// Jours de nourriture qu'un foyer veut avoir d'avance.
 const FOOD_DAYS: f32 = 7.0;
 /// Salaire d'un bâtisseur par voyage de matériaux, payé par la caisse du village.
@@ -78,8 +76,11 @@ impl World {
         }
         let mut keep = amount;
         if g == Good::Grain {
-            st.food = (st.food + amount * TAX * g.ration()).min(MAX_FOOD);
-            keep = amount * (1.0 - TAX);
+            // La taxe du village (fixée par le chef) se prélève aussi en grain.
+            let tax = self.society.tax(self.villages[vi].id);
+            let st = &mut self.villages[vi].stock;
+            st.food = (st.food + amount * tax * g.ration()).min(MAX_FOOD);
+            keep = amount * (1.0 - tax);
         }
         if let Some(h) = self.home_household_mut(i) {
             h.inv[g as usize] += keep;
@@ -103,6 +104,8 @@ impl World {
             return;
         };
         let bonus = self.work_bonus(i);
+        let sourdough = self.tech_bonus(i, crate::society::Tech::Sourdough, 1.15);
+        let tempering = self.tech_bonus(i, crate::society::Tech::Tempering, 1.4);
         let Some(h) = self.home_household_mut(i) else {
             return;
         };
@@ -125,13 +128,13 @@ impl World {
                 let n = (6.0 * bonus).min(inv[flour]).min(inv[wood] * 6.0);
                 inv[flour] -= n;
                 inv[wood] -= n / 6.0;
-                inv[bread] += n * 1.1;
+                inv[bread] += n * 1.1 * sourdough;
             }
             Workshop::Smithy => {
                 let k = (0.8 * bonus).min(inv[ore] / 2.0).min(inv[wood] / 2.0);
                 inv[ore] -= 2.0 * k;
                 inv[wood] -= 2.0 * k;
-                inv[tools] += k;
+                inv[tools] += k * tempering;
             }
         }
     }
@@ -224,6 +227,11 @@ impl World {
         let homes = self.homes(vi);
         let n = homes.len();
         let price = self.economy.markets[vi].price;
+        let village = self.villages[vi].id;
+        let tax = self.society.tax(village);
+        // Jour de foire : on achète plus volontiers, et les marchands venus d'ailleurs ne
+        // paient pas la taxe.
+        let fair = self.fair_open(village);
         // Offres de vente et besoins de chaque foyer.
         let mut sell = vec![[0.0f32; GOODS]; n];
         let mut buy = vec![[0.0f32; GOODS]; n];
@@ -263,7 +271,7 @@ impl World {
             // moins quand c'est cher (plus du tout à deux fois et demie le prix habituel).
             // C'est ce qui fait venir le poisson de la côte dans les villages de l'intérieur.
             let protein = h.inv[Good::Meat as usize] + h.inv[Good::Fish as usize];
-            let want = members.len() as f32 * 2.0 - protein;
+            let want = members.len() as f32 * if fair { 3.0 } else { 2.0 } - protein;
             if want > 0.5 {
                 for g in [Good::Meat, Good::Fish] {
                     let base = g.base_price();
@@ -467,19 +475,20 @@ impl World {
                 let k = n + v;
                 let money = traded[g] * price[g] * sold[k] * worth[k] / paid;
                 // (Les recettes des marchands ne comptent pas comme revenu d'un métier d'ici.)
-                treasury += money * TAX;
-                self.trader_sold(p, g, sold[k], money * (1.0 - TAX));
+                let tax = if fair { 0.0 } else { tax };
+                treasury += money * tax;
+                self.trader_sold(p, g, sold[k], money * (1.0 - tax));
             }
             for k in 0..n {
                 let units = sold[k];
                 let money = traded[g] * price[g] * units * worth[k] / paid;
                 got[k][g] -= units;
-                let net = money * (1.0 - TAX);
+                let net = money * (1.0 - tax);
                 // Remboursement de l'avance sur la moitié des ventes.
                 let repay = debt[k].min(net * 0.5);
                 debt[k] -= repay;
                 coins[k] += net - repay;
-                treasury += money * TAX + repay;
+                treasury += money * tax + repay;
                 revenue[g] += money;
             }
         }
@@ -522,6 +531,9 @@ impl World {
         m.history.push_back(m.price);
         while m.history.len() > crate::economy::PRICE_HISTORY {
             m.history.pop_front();
+        }
+        if fair {
+            self.fair_market(vi, &visitors);
         }
     }
 }
@@ -591,7 +603,11 @@ impl World {
                 st.food -= help;
                 need -= help;
                 // Plus rien au grenier : un ami peut partager ses provisions.
-                if need > 0.25 * full && self.neighbourly_help(vi, *hid, members, need) > 0.0 {
+                // … sinon, un affamé sans scrupules vole chez un voisin.
+                if need > 0.25 * full
+                    && (self.neighbourly_help(vi, *hid, members, need) > 0.0
+                        || self.steal_food(vi, *hid, members, need) > 0.0)
+                {
                     let h = self.economy.household(*hid);
                     for g in Good::FOODS {
                         let gi = g as usize;

@@ -3,6 +3,7 @@ import type { EventView } from "./EventView";
 import type { LinkView } from "./LinkView";
 import type { PersonRef } from "./PersonRef";
 import type { PriceRow } from "./PriceRow";
+import type { TechView } from "./TechView";
 import type { VillageRef } from "./VillageRef";
 
 export type VillageSheet = { id: number, name: string, x: number, y: number, color: number, population: number, children: number, elders: number, houses: number, sites: number, ruins: number, fields: number, fields_ripe: number, food: number, wood: number, stone: number, 
@@ -33,4 +34,28 @@ merchants: Array<PersonRef>,
 /**
  * Village d'où sont venus les fondateurs (s'il a été fondé en cours de partie).
  */
-founded_from: VillageRef | null, events: Array<EventView>, };
+founded_from: VillageRef | null, chief: PersonRef | null, council: Array<PersonRef>, 
+/**
+ * Taxe sur les ventes (0–1).
+ */
+tax: number, 
+/**
+ * « prochaine élection dans 23 jours ».
+ */
+next_election: string, 
+/**
+ * Techniques connues, avec leur origine.
+ */
+techs: Array<TechView>, 
+/**
+ * Malades en ce moment.
+ */
+sick: number, 
+/**
+ * « épidémie de fièvre (2 morts) ».
+ */
+epidemic: string | null, 
+/**
+ * Fêtes et foires (en cours, annoncées, passées).
+ */
+festivities: Array<string>, events: Array<EventView>, };

@@ -8,13 +8,14 @@ mod found;
 mod life;
 mod market;
 mod mind;
+mod society;
 mod tasks;
 mod trade;
 
 pub use mind::{INTENT_LABELS, LEVEL_LABELS, MindStats, skill_level};
 
 pub(crate) use found::is_quarry;
-pub use life::de;
+pub use life::{at_place, de, of_place};
 
 use crate::{clock::Season, settlement::FieldState, tuning::*, world::World};
 
@@ -41,7 +42,8 @@ pub fn rest_day(tick: u64) -> bool {
     tick_day(tick) % 7 == 6
 }
 
-fn tick_day(tick: u64) -> u64 {
+/// Numéro du jour (depuis le début du monde) d'un tick.
+pub fn tick_day(tick: u64) -> u64 {
     (tick * crate::clock::TICK_SECONDS + crate::clock::START_HOUR * 3600) / crate::clock::SECONDS_PER_DAY
 }
 
@@ -66,6 +68,7 @@ impl World {
                     self.daily();
                     self.daily_minds();
                     self.daily_trade();
+                    self.daily_society();
                 }
                 _ => {}
             }

@@ -108,3 +108,8 @@ table.market .num { text-align: right; font-variant-numeric: tabular-nums; white
 #panel table.links { width: 100%; border-collapse: collapse; font-size: 12px; }
 #panel table.links td, #panel table.links th { padding: 3px 4px; vertical-align: top; border-bottom: 1px solid rgba(255, 255, 255, 0.08); text-align: left; }
 #panel table.links th { color: var(--muted); font-weight: normal; }
+
+#panel .office { margin: 4px 0 0; color: #ffd98a; }
+#panel .sick { margin: 0 0 6px; color: #b8e07a; }
+#panel ul.techs { padding-left: 0; list-style: none; }
+#panel ul.techs li { padding: 3px 0; }

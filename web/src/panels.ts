@@ -110,8 +110,10 @@ export class Panel {
       <button class="close" data-close aria-label="Fermer">×</button>
       <h2>${esc(p.name)}</h2>
       <p class="sub">${esc(p.role)} · ${p.age} ans · <a data-village="${p.village}">${esc(p.village_name)}</a></p>
+      ${p.office ? `<p class="office">${esc(cap(p.office))}</p>` : ""}
       ${p.alive ? `<p class="now">${p.hidden ? "Dort chez lui" + (p.female ? "le" : "") : esc(cap(p.doing))}</p>` : `<p class="now">${esc(cap(p.status))}</p>`}
       ${p.alive ? `<p class="mood"><span class="dot" style="background:${moodColor(p.mood_value)}"></span>${esc(cap(p.mood))}</p>${p.traits.length ? `<p class="traits muted">${esc(cap(p.traits.join(", ")))}</p>` : ""}` : ""}
+      ${p.health ? `<p class="sick">${esc(cap(p.health))}</p>` : ""}
       ${actions}
       <dl>
         ${p.home ? `<dt>Maison</dt><dd>${esc(p.home)}</dd>` : ""}
@@ -119,6 +121,7 @@ export class Panel {
         ${p.master ? `<dt>Apprenti${p.female ? "e" : ""} de</dt><dd>${link(p.master)}</dd>` : ""}
         ${p.skill ? `<dt>Métier</dt><dd>${esc(p.skill.rank)} ${meter(p.skill.value)}</dd>` : ""}
         ${p.alive ? `<dt>Réputation</dt><dd>${esc(p.reputation_label)}</dd>` : ""}
+        ${p.convictions ? `<dt>Justice</dt><dd>condamné${p.female ? "e" : ""} ${p.convictions === 1 ? "une fois" : `${p.convictions} fois`}</dd>` : ""}
         ${p.goals.length ? `<dt>Rêve${p.goals.length > 1 ? "s" : ""}</dt><dd>${p.goals.map((g) => (g.reached ? `<s class="muted">${esc(g.label)}</s> ✓` : esc(g.label))).join("<br>")}</dd>` : ""}
       </dl>
       ${p.alive ? `<h3>Besoins</h3><div class="needs">${p.needs.map((n) => `<span>${esc(n.label)}</span>${meter(n.value)}`).join("")}</div>` : ""}
@@ -148,9 +151,18 @@ export class Panel {
         <dt>Champs</dt><dd>${v.fields}${v.fields_ripe ? ` (${v.fields_ripe} prêts à moissonner)` : ""}</dd>
         <dt>Vivres</dt><dd>${v.food_days} jours (grenier commun : ${Math.round(v.food)} rations)${v.hungry ? ` <b class="warn">disette</b>` : ""}</dd>
         <dt>Chantiers</dt><dd>${v.wood} bois · ${v.has_stone ? `${v.stone} pierre` : "pas de carrière"}</dd>
-        <dt>Caisse</dt><dd>${money(v.treasury)}</dd>
+        <dt>Caisse</dt><dd>${money(v.treasury)} · taxe ${Math.round(v.tax * 100)} %</dd>
+        <dt>Santé</dt><dd>${v.epidemic ? `<b class="warn">${esc(v.epidemic)}</b> · ` : ""}${v.sick ? `${v.sick} malade${v.sick > 1 ? "s" : ""}` : "personne n'est malade"}</dd>
+        ${v.festivities.length ? `<dt>Fêtes</dt><dd>${v.festivities.map(esc).join("<br>")}</dd>` : ""}
         <dt>Ateliers</dt><dd>${v.workshops.length ? v.workshops.map(esc).join(", ") : "aucun"}</dd>
       </dl>
+      <h3>Gouvernement</h3>
+      ${v.chief
+        ? `<p><a data-person="${v.chief.id}">${esc(v.chief.name)}</a> <span class="muted">· ${esc(v.chief.note)}</span>${v.council.length ? `<br><span class="muted">conseil :</span> ${v.council.map((r) => `<a data-person="${r.id}">${esc(r.name)}</a>`).join(", ")}` : ""}<br><span class="muted">${esc(v.next_election)}</span></p>`
+        : `<p class="muted">${esc(v.next_election)}</p>`}
+      ${v.techs.length ? `<h3>Savoirs</h3><ul class="techs">${v.techs
+        .map((t) => `<li><b>${esc(cap(t.label))}</b> <span class="muted">· ${esc(t.effect)}</span><br><span class="muted date">${t.by !== null ? `<a data-person="${t.by}">${esc(t.origin)}</a>` : t.from ? `<a data-village="${t.from.id}">${esc(t.origin)}</a>` : esc(t.origin)}</span></li>`)
+        .join("")}</ul>` : ""}
       <h3>Marché</h3>
       <table class="market">
         <tr><th></th><th>prix</th><th>7 j</th><th>vendu</th></tr>

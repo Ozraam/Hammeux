@@ -23,7 +23,7 @@ impl World {
             }
             let age = p.age(tick);
             if age >= p.death_age {
-                self.die(i);
+                self.die_of(i, None);
             } else if age >= ADULT_AGE && p.job.is_none() {
                 self.come_of_age(i);
             }
@@ -32,14 +32,25 @@ impl World {
         self.pairing();
     }
 
-    fn die(&mut self, i: usize) {
+    /// Décès (de vieillesse, ou de la maladie nommée : « de la fièvre »).
+    pub(crate) fn die_of(&mut self, i: usize, cause: Option<&str>) {
         let tick = self.tick;
+        let chief = self
+            .society
+            .office(self.people[i].village, self.people[i].id)
+            .is_some_and(|o| o == "chef");
         let p = &mut self.people[i];
         let (id, village, age) = (p.id, p.village, p.age(tick) as u32);
         p.status = Status::Dead { tick };
         p.brain = Default::default();
         let home = p.home.take();
-        let text = format!("Décès {} à {age} ans", de(&p.name()));
+        let mut text = match cause {
+            Some(c) => format!("{} meurt {c} à {age} ans", p.name()),
+            None => format!("Décès {} à {age} ans", de(&p.name())),
+        };
+        if chief {
+            text += ", le village perd son chef";
+        }
         self.mourn(i);
         if let Some(vi) = self.village_index(village)
             && let Some(h) = home.and_then(|h| self.villages[vi].house_mut(h))
@@ -713,6 +724,28 @@ impl World {
     }
 }
 
+/// « de Belair », « des Trois-Puits », « du Val » : complément de nom d'un lieu.
+pub fn of_place(name: &str) -> String {
+    if let Some(rest) = name.strip_prefix("Les ") {
+        format!("des {rest}")
+    } else if let Some(rest) = name.strip_prefix("Le ") {
+        format!("du {rest}")
+    } else {
+        de(name)
+    }
+}
+
+/// « à Belair », « aux Trois-Puits », « au Val ».
+pub fn at_place(name: &str) -> String {
+    if let Some(rest) = name.strip_prefix("Les ") {
+        format!("aux {rest}")
+    } else if let Some(rest) = name.strip_prefix("Le ") {
+        format!("au {rest}")
+    } else {
+        format!("à {name}")
+    }
+}
+
 /// « de » ou « d' » devant un nom (élision devant une voyelle ou un h muet).
 pub fn de(name: &str) -> String {
     let first = name
@@ -739,5 +772,8 @@ mod tests {
         assert_eq!(de("Hortense"), "d'Hortense");
         assert_eq!(de("Élise"), "d'Élise");
         assert_eq!(de("Paul"), "de Paul");
+        assert_eq!(super::of_place("Les Trois-Puits"), "des Trois-Puits");
+        assert_eq!(super::at_place("Le Val"), "au Val");
+        assert_eq!(super::of_place("L'Aubépine"), "de L'Aubépine");
     }
 }

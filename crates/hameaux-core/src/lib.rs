@@ -15,6 +15,7 @@ pub mod rng;
 pub mod save;
 pub mod settlement;
 pub mod sim;
+pub mod society;
 pub mod trade;
 pub mod tuning;
 pub mod world;

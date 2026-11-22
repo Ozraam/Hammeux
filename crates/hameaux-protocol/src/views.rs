@@ -31,6 +31,8 @@ pub struct PersonDot {
     pub carry: u8,
     /// Vêtement, peau, cheveux.
     pub looks: [u8; 3],
+    /// Malade.
+    pub sick: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -73,6 +75,10 @@ pub struct CivicView {
     pub well_x: u32,
     pub well_y: u32,
     pub color: u32,
+    /// Fête des moissons (ou premier jour de foire) aujourd'hui.
+    pub feast: bool,
+    /// Foire ouverte.
+    pub fair: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
@@ -110,6 +116,8 @@ impl Scene {
                 well_x: v.well.0,
                 well_y: v.well.1,
                 color: v.color,
+                feast: world.festive(v.id),
+                fair: world.fair_open(v.id),
             });
             for h in v.houses.iter().filter(|h| inside(h.x as f32, h.y as f32)) {
                 scene.houses.push(HouseView {
@@ -173,6 +181,7 @@ impl Scene {
                     Some(Carry::Cart) => 254,
                 },
                 looks: p.looks,
+                sick: world.society.sick.contains_key(&p.id),
             });
         }
         scene
@@ -250,6 +259,12 @@ pub struct PersonSheet {
     pub master: Option<PersonRef>,
     /// Réserves et argent de son foyer.
     pub household: Option<HouseholdView>,
+    /// « cheffe de Clairval », « membre du conseil de Belair ».
+    pub office: Option<String>,
+    /// « malade (fièvre), encore 2 jours ».
+    pub health: Option<String>,
+    /// Condamnations par le chef.
+    pub convictions: u32,
     pub events: Vec<EventView>,
 }
 
@@ -403,6 +418,13 @@ impl PersonSheet {
                 Leg::Selling => doing = format!("attend le marché de {place}{with}"),
                 Leg::Returning => doing = format!("rentre de {place}{with}"),
             }
+        }
+        let sickness = world.sick(id).filter(|_| p.alive());
+        if let Some(s) = sickness
+            && !p.brain.hidden
+            && !world.away(id as usize)
+        {
+            doing = format!("est malade, alité{} ({})", p.e(), s.disease.label());
         }
         if let Some(c) = p.brain.carry
             && p.alive()
@@ -596,6 +618,26 @@ impl PersonSheet {
                     hungry: h.hungry_days > 0,
                 }
             }),
+            office: world
+                .society
+                .office(p.village, id)
+                .filter(|_| p.alive())
+                .map(|o| {
+                    let name = village.map(|v| v.name.as_str()).unwrap_or_default();
+                    match (o, p.female) {
+                        ("chef", true) => format!("cheffe {}", hameaux_core::sim::de(name)),
+                        ("chef", false) => format!("chef {}", hameaux_core::sim::de(name)),
+                        _ => format!("membre du conseil {}", hameaux_core::sim::de(name)),
+                    }
+                }),
+            health: sickness.map(|s| {
+                let left = match s.days_left {
+                    1 => "encore un jour".to_string(),
+                    d => format!("encore {d} jours"),
+                };
+                format!("malade : {} ({left})", s.disease.label())
+            }),
+            convictions: world.society.convictions.get(&id).copied().unwrap_or(0),
             events,
         })
     }
@@ -659,7 +701,35 @@ pub struct VillageSheet {
     pub merchants: Vec<PersonRef>,
     /// Village d'où sont venus les fondateurs (s'il a été fondé en cours de partie).
     pub founded_from: Option<VillageRef>,
+    pub chief: Option<PersonRef>,
+    pub council: Vec<PersonRef>,
+    /// Taxe sur les ventes (0–1).
+    pub tax: f32,
+    /// « prochaine élection dans 23 jours ».
+    pub next_election: String,
+    /// Techniques connues, avec leur origine.
+    pub techs: Vec<TechView>,
+    /// Malades en ce moment.
+    pub sick: u32,
+    /// « épidémie de fièvre (2 morts) ».
+    pub epidemic: Option<String>,
+    /// Fêtes et foires (en cours, annoncées, passées).
+    pub festivities: Vec<String>,
     pub events: Vec<EventView>,
+}
+
+/// Une technique connue d'un village.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct TechView {
+    /// « l'assolement ».
+    pub label: String,
+    /// « les champs rendent un quart de plus ».
+    pub effect: String,
+    /// « découvert par Jeanne Martin, an 3 » ou « appris de Belair, an 4 ».
+    pub origin: String,
+    pub by: Option<u32>,
+    pub from: Option<VillageRef>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -699,10 +769,37 @@ pub struct PriceRow {
     pub demand: f32,
 }
 
+/// Fêtes et foires d'un village, pour sa fiche.
+fn festivities(world: &World, id: u32) -> Vec<String> {
+    let Some(p) = world.society.polity(id) else {
+        return Vec::new();
+    };
+    let today = hameaux_core::sim::tick_day(world.tick);
+    let mut out = Vec::new();
+    if world.festive(id) && p.feast_day.is_some() {
+        out.push("fête des moissons aujourd'hui".to_string());
+    }
+    match p.fair_day {
+        Some(d) if today >= d => out.push("la foire est ouverte".to_string()),
+        Some(d) if d == today + 1 => out.push("grande foire demain".to_string()),
+        Some(d) => out.push(format!("grande foire dans {} jours", d - today)),
+        None => {}
+    }
+    let year = |t: u64| Clock::at(t).year;
+    if p.last_feast > 0 && p.feast_day.is_none() {
+        out.push(format!("dernière fête des moissons : an {}", year(p.last_feast)));
+    }
+    if p.last_fair > 0 && p.fair_day.is_none() {
+        out.push(format!("dernière foire : an {}", year(p.last_fair)));
+    }
+    out
+}
+
 impl VillageSheet {
     pub fn of(world: &World, id: u32) -> Option<Self> {
         let v = &world.villages[world.village_index(id)?];
         let tick = world.tick;
+        let polity = world.society.polity(id);
         let people: Vec<&Person> = world
             .alive()
             .filter(|p| p.village == id && !p.brain.leaving)
@@ -822,6 +919,81 @@ impl VillageSheet {
                 id: o,
                 name: world.village_name(o),
             }),
+            chief: polity.and_then(|p| p.chief).map(|c| {
+                person_ref(
+                    world,
+                    c,
+                    if world.people[c as usize].female {
+                        "cheffe"
+                    } else {
+                        "chef"
+                    },
+                )
+            }),
+            council: polity
+                .map(|p| {
+                    p.council
+                        .iter()
+                        .map(|&c| person_ref(world, c, "conseil"))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            tax: world.society.tax(id),
+            next_election: match polity.filter(|p| p.chief.is_some()) {
+                Some(p) => {
+                    let days = p.next_election.saturating_sub(tick) / hameaux_core::tuning::DAY;
+                    match days {
+                        0 => "élection demain".to_string(),
+                        1 => "prochaine élection dans un jour".to_string(),
+                        d => format!("prochaine élection dans {d} jours"),
+                    }
+                }
+                None => "pas encore de chef".to_string(),
+            },
+            techs: polity
+                .map(|p| {
+                    p.techs
+                        .iter()
+                        .map(|k| {
+                            let year = Clock::at(k.tick).year;
+                            let origin = match (k.by, k.from) {
+                                (Some(b), _) => format!(
+                                    "découvert ici par {}, an {year}",
+                                    world.people[b as usize].name()
+                                ),
+                                (None, Some(f)) => format!(
+                                    "venu {}, an {year}",
+                                    hameaux_core::sim::de(&world.village_name(f))
+                                ),
+                                _ => format!("an {year}"),
+                            };
+                            TechView {
+                                label: k.tech.label().into(),
+                                effect: k.tech.effect().into(),
+                                origin,
+                                by: k.by,
+                                from: k.from.map(|f| VillageRef {
+                                    id: f,
+                                    name: world.village_name(f),
+                                }),
+                            }
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            sick: people
+                .iter()
+                .filter(|p| world.society.sick.contains_key(&p.id))
+                .count() as u32,
+            epidemic: polity.and_then(|p| p.epidemic).map(|d| {
+                let dead = polity.map_or(0, |p| p.epidemic_dead);
+                match dead {
+                    0 => format!("épidémie de {}", d.label()),
+                    1 => format!("épidémie de {} (un mort)", d.label()),
+                    k => format!("épidémie de {} ({k} morts)", d.label()),
+                }
+            }),
+            festivities: festivities(world, id),
             events: world
                 .chronicle
                 .events

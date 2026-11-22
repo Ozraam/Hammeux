@@ -55,4 +55,16 @@ memories: Array<MemoryView>, master: PersonRef | null,
 /**
  * Réserves et argent de son foyer.
  */
-household: HouseholdView | null, events: Array<EventView>, };
+household: HouseholdView | null, 
+/**
+ * « cheffe de Clairval », « membre du conseil de Belair ».
+ */
+office: string | null, 
+/**
+ * « malade (fièvre), encore 2 jours ».
+ */
+health: string | null, 
+/**
+ * Condamnations par le chef.
+ */
+convictions: number, events: Array<EventView>, };

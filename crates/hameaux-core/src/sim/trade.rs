@@ -203,6 +203,9 @@ impl World {
         }
         let id = self.people[i].id;
         let home_id = self.villages[vi].id;
+        if self.society.sick.contains_key(&id) {
+            return false;
+        }
         let Some((coins, debt)) = self.home_household(i).map(|h| (h.coins, h.debt)) else {
             return false;
         };
@@ -235,7 +238,11 @@ impl World {
                     if self.tick.saturating_sub(n.tick) > 14 * DAY {
                         unknown.get_or_insert(j);
                     }
-                    let (profit, want) = self.plan_trip(vi, j, &n, capital);
+                    let (mut profit, want) = self.plan_trip(vi, j, &n, capital);
+                    // Une foire s'y ouvre : on y vendra bien, on y apprendra beaucoup.
+                    if self.fair_soon(other) {
+                        profit = profit.max(MIN_PROFIT) + 12.0;
+                    }
                     if profit >= MIN_PROFIT && best.as_ref().is_none_or(|b| profit > b.0) {
                         best = Some((profit, j, want));
                     }
@@ -448,6 +455,8 @@ impl World {
                 };
                 self.trade.hear(t.dest, home, &news);
                 self.trade.share(home, t.dest);
+                // … et parfois un savoir-faire de chez lui.
+                self.teach(home, t.dest, 0.04, Some(id));
                 let tr = self.trade.traders.get_mut(&id).unwrap();
                 tr.leg = Leg::Selling;
                 tr.arrived = true;
@@ -459,6 +468,8 @@ impl World {
                     self.trade.hear(home, t.dest, &news);
                     self.trade.share(t.dest, home);
                 }
+                // Il rapporte ce qu'il a vu faire là-bas.
+                self.teach(t.dest, home, 0.07, Some(id));
                 self.end_trip(i, true);
             }
             _ => {}
@@ -534,6 +545,8 @@ impl World {
             .filter(|(p, t)| {
                 t.leg == Leg::Selling && t.arrived && t.dest == id && self.people[**p as usize].alive()
             })
+            // Venus pour la foire : ils attendent qu'elle ouvre.
+            .filter(|_| !self.fair_ahead(id))
             .map(|(&p, _)| p)
             .collect()
     }
@@ -549,7 +562,11 @@ impl World {
                 let person = &self.people[**p as usize];
                 person.alive()
                     && ((t.leg == Leg::Buying && person.village == id && t.dealt == 0)
-                        || (t.leg == Leg::Selling && t.arrived && t.dest == id && t.dealt == 0))
+                        || (t.leg == Leg::Selling
+                            && t.arrived
+                            && t.dest == id
+                            && t.dealt == 0
+                            && !self.fair_ahead(id)))
             })
             .map(|(&p, _)| p)
             .collect()
@@ -611,7 +628,7 @@ impl World {
     }
 
     /// Est-il en voyage, loin de son village ?
-    pub(crate) fn away(&self, i: usize) -> bool {
+    pub fn away(&self, i: usize) -> bool {
         self.trade
             .traders
             .get(&self.people[i].id)
@@ -659,6 +676,11 @@ impl World {
             h.residents.retain(|&r| r != id);
         }
         let to_id = self.villages[to].id;
+        // Un adulte qui s'installe ailleurs y apporte ce qu'on savait faire chez lui.
+        let from_id = self.people[i].village;
+        if !self.people[i].child(tick) {
+            self.teach(from_id, to_id, 0.25, Some(id));
+        }
         let (x, y) = self.far_tile(to, 20);
         let target = {
             let h = self.villages[to].house_mut(house).unwrap();
@@ -867,6 +889,7 @@ impl World {
         };
         let new_id = self.villages[new].id;
         self.trade.founded_from.insert(new_id, id);
+        self.inherit_techs(id, new_id);
         // Le chemin des fondateurs devient tout de suite une route.
         if self.ensure_route(vi, new)
             && let Some(r) = self.trade.routes.get_mut(&pair(id, new_id))

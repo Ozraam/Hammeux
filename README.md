@@ -4,7 +4,7 @@ Un monde de villages simulé en continu sur un serveur, consultable dans le navi
 
 ## Structure
 
-- `crates/hameaux-core` : moteur (monde, carte, habitants et leurs esprits, villages, économie, simulation, chronique, sauvegarde). Ni réseau ni disque.
+- `crates/hameaux-core` : moteur (monde, carte, habitants et leurs esprits, villages, économie, commerce, société, simulation, chronique, sauvegarde). Ni réseau ni disque.
 - `crates/hameaux-worldgen` : génération du monde (relief, rivières, milieux, ressources, villages).
 - `crates/hameaux-protocol` : messages serveur ↔ navigateur ; génère `web/src/protocol/*.ts` via `cargo test`.
 - `crates/hameaux-server` : boucle de simulation, API HTTP/WebSocket, sauvegardes.
@@ -25,7 +25,7 @@ Aperçu d'un monde sans lancer le serveur (statistiques + image) :
 
 ```bash
 cargo run --release -p hameaux-cli -- map --seed 42 --out carte.png
-cargo run --release -p hameaux-cli -- run --seed 42 --days 336   # 12 ans : population, greniers, humeurs, intentions, commerce, prix, événements
+cargo run --release -p hameaux-cli -- run --seed 42 --days 336   # 12 ans : population, greniers, humeurs, intentions, commerce, prix, société, événements
 ```
 
 ## Variables d'environnement

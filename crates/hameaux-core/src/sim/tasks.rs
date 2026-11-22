@@ -6,6 +6,7 @@ use crate::{
     map::{Biome, Resource as MapResource},
     people::{Act, Carry, Intent, Job, Status, Step},
     settlement::{FieldState, HouseState},
+    society::Tech,
     tuning::*,
     world::{Caches, World, occ},
 };
@@ -168,18 +169,18 @@ impl World {
                     Good::Wood => LOAD_WOOD as f32,
                     Good::Stone => LOAD_STONE as f32,
                     Good::Fish => {
-                        if self.map.resource[tile as usize] == MapResource::Fish as u8 {
+                        (if self.map.resource[tile as usize] == MapResource::Fish as u8 {
                             1.4
                         } else {
                             0.7
-                        }
+                        }) * self.tech_bonus(i, Tech::Nets, 1.4)
                     }
                     Good::Meat => {
-                        if self.map.resource[tile as usize] == MapResource::Game as u8 {
+                        (if self.map.resource[tile as usize] == MapResource::Game as u8 {
                             1.1
                         } else {
                             0.5
-                        }
+                        }) * self.tech_bonus(i, Tech::Snares, 1.3)
                     }
                     Good::Ore => 1.5,
                     _ => 1.0,
@@ -198,6 +199,7 @@ impl World {
             }
             Step::Craft(wid) => self.craft(i, wid),
             Step::Talk(j) => self.talk(i, j as usize),
+            Step::Mingle => self.mingle(i),
             Step::HideHere => {
                 let b = &mut self.people[i].brain;
                 b.hidden = true;
@@ -259,7 +261,7 @@ impl World {
                     f.work = 0.0;
                     f.growth = 0.0;
                 }
-                let amount = amount * self.work_bonus(i);
+                let amount = amount * self.work_bonus(i) * self.tech_bonus(i, Tech::Rotation, 1.25);
                 let b = &mut self.people[i].brain;
                 b.carry = Some(Carry::Good(Good::Grain));
                 b.carry_amount = amount;
@@ -294,6 +296,14 @@ impl World {
         }
         let part = day_part(self.clock().hour);
         let home = self.home_tile(i).map(|(x, y)| self.map.idx(x, y) as u32);
+        let id = self.people[i].id;
+        // Malade : on reste couché chez soi (la nuit, on dort comme tout le monde).
+        if part != DayPart::Night && self.society.sick.contains_key(&id) {
+            self.people[i].brain.intent = Intent::Rest;
+            self.near_home(i, HOUR, Act::Ill);
+            return;
+        }
+        let feast = self.festive(self.people[i].village) && (9..=21).contains(&self.clock().hour);
         match part {
             DayPart::Night => {
                 self.people[i].brain.intent = Intent::Sleep;
@@ -308,7 +318,13 @@ impl World {
             }
             DayPart::Evening | DayPart::Work if self.people[i].child(tick) => {
                 self.people[i].brain.intent = Intent::Play;
-                self.play(i);
+                if feast && self.rng.chance(0.7) {
+                    let (x, y) = self.villages[self.village_of(i)].well;
+                    let spot = self.spot_near(x, y, 4);
+                    self.plan(i, [Step::Go(spot), Self::wait(30 * MINUTE, Act::Playing)]);
+                } else {
+                    self.play(i);
+                }
             }
             DayPart::Evening | DayPart::Work => {
                 let intent = self.decide(i, part == DayPart::Work);
@@ -371,6 +387,14 @@ impl World {
             options.push((w, learning.map_or(Intent::Work, Intent::Learn)));
         }
 
+        // La fête du village (ou le premier jour de sa foire) : presque tout le monde y va.
+        if self.festive(p.village) && (9..=21).contains(&self.clock().hour) {
+            options.push((
+                1.3 + 0.4 * t.sociability + 0.2 * t.openness + 0.3 * mood.joy,
+                Intent::Feast,
+            ));
+        }
+
         // Discuter avec un ami.
         if let Some(f) = self.pick_friend(i) {
             let c = (1.0 - n.company) * (0.5 + 0.9 * t.sociability) + 0.15 * mood.joy + 0.3 * evening + 0.05;
@@ -427,6 +451,16 @@ impl World {
             Intent::Visit(q) => self.meet(i, q, false),
             Intent::Stroll => {
                 self.stroll(i);
+                true
+            }
+            Intent::Feast => {
+                let (x, y) = self.villages[self.village_of(i)].well;
+                let spot = self.spot_near(x, y, 4);
+                let ticks = 40 * MINUTE + self.rng.below(20 * MINUTE);
+                self.plan(
+                    i,
+                    [Step::Go(spot), Self::wait(ticks, Act::Feasting), Step::Mingle],
+                );
                 true
             }
             _ => false,
