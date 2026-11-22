@@ -25,7 +25,7 @@ Aperçu d'un monde sans lancer le serveur (statistiques + image) :
 
 ```bash
 cargo run --release -p hameaux-cli -- map --seed 42 --out carte.png
-cargo run --release -p hameaux-cli -- run --seed 42 --days 336   # 12 ans : population, greniers, humeurs, intentions, événements
+cargo run --release -p hameaux-cli -- run --seed 42 --days 336   # 12 ans : population, greniers, humeurs, intentions, commerce, prix, événements
 ```
 
 ## Variables d'environnement

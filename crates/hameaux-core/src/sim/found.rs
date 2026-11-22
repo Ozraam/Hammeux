@@ -11,9 +11,41 @@ use crate::{
 
 impl World {
     pub fn found_village(&mut self, site: &Site) {
-        let Some((gx, gy)) = self.civic_spot(site.x, site.y) else {
+        let Some(vi) = self.start_village(site) else {
             return;
         };
+        let id = self.villages[vi].id;
+        let families = 4 + self.rng.below(2) as usize;
+        for _ in 0..families {
+            if let Some(h) = self.new_house(vi, HouseState::Inhabited) {
+                self.settle_family(vi, h);
+            }
+        }
+        self.first_fields(vi);
+        let pop = self.population(id);
+        self.event(
+            Some(id),
+            vec![],
+            format!("Fondation de {} ({pop} habitants)", site.name),
+        );
+    }
+
+    /// Premier chantier, champs pour nourrir tout le monde, petite réserve au grenier commun.
+    pub(crate) fn first_fields(&mut self, vi: usize) {
+        let id = self.villages[vi].id;
+        self.new_house(vi, HouseState::Building);
+        let pop = self.population(id);
+        let fields = (pop as f32 * FIELDS_PER_PERSON).ceil() as usize + 1;
+        for _ in 0..fields {
+            self.new_field(vi);
+        }
+        // Le grenier commun garde une petite réserve ; chaque foyer a ses provisions.
+        self.villages[vi].stock.food = pop as f32 * 5.0;
+    }
+
+    /// Grenier, puits et réserves d'un village encore vide. `None` si le site ne convient pas.
+    pub(crate) fn start_village(&mut self, site: &Site) -> Option<usize> {
+        let (gx, gy) = self.civic_spot(site.x, site.y)?;
         let id = self.villages.len() as u32;
         let well = (gx + 3, gy + 1);
         for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
@@ -45,29 +77,11 @@ impl World {
         });
         let vi = self.villages.len() - 1;
         self.compute_access(vi);
-        let families = 4 + self.rng.below(2) as usize;
-        for _ in 0..families {
-            if let Some(h) = self.new_house(vi, HouseState::Inhabited) {
-                self.settle_family(vi, h);
-            }
-        }
-        self.new_house(vi, HouseState::Building);
-        let pop = self.population(id);
-        let fields = (pop as f32 * FIELDS_PER_PERSON).ceil() as usize + 1;
-        for _ in 0..fields {
-            self.new_field(vi);
-        }
-        // Le grenier commun garde une petite réserve ; chaque foyer a ses provisions.
-        self.villages[vi].stock.food = pop as f32 * 5.0;
-        self.event(
-            Some(id),
-            vec![],
-            format!("Fondation de {} ({pop} habitants)", site.name),
-        );
+        Some(vi)
     }
 
     /// Grenier 2 × 2, sa porte, et le puits à droite : tout doit être constructible et libre.
-    fn civic_spot(&self, sx: u32, sy: u32) -> Option<(u32, u32)> {
+    pub(crate) fn civic_spot(&self, sx: u32, sy: u32) -> Option<(u32, u32)> {
         let m = &self.map;
         let ok = |x: i64, y: i64| {
             m.inside(x, y)
@@ -440,7 +454,14 @@ impl World {
         for j in options {
             let family = if parent_jobs.contains(&j) { 1.4 } else { 1.0 };
             let master = if adult && taught(self, j) { 1.5 } else { 1.0 };
-            let score = self.job_value(vi, j) * family * master * (0.8 + 0.4 * self.rng.f32());
+            // Les curieux et les audacieux ont envie de voir du pays.
+            let t = p.mind.traits;
+            let taste = if j == Job::Merchant {
+                0.6 + 0.6 * t.openness + 0.4 * t.risk
+            } else {
+                1.0
+            };
+            let score = self.job_value(vi, j) * family * master * taste * (0.8 + 0.4 * self.rng.f32());
             if score > best.0 {
                 best = (score, j);
             }

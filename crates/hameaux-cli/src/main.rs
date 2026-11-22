@@ -172,6 +172,44 @@ fn main() {
                 }
             }
             println!("  métier qui ne rapporte rien (chômage) : {idle} sur {adults}");
+            let tr = &world.trade;
+            let (trips, profit): (u32, f32) = tr
+                .traders
+                .values()
+                .fold((0, 0.0), |a, t| (a.0 + t.trips, a.1 + t.profit));
+            let roads = tr.routes.values().filter(|r| r.road).count();
+            println!(
+                "— commerce — {} villages · {} marchands en activité · {trips} voyages · bénéfice moyen {:.1} sous · {roads} routes",
+                world.villages.len(),
+                tr.traders.len(),
+                profit / trips.max(1) as f32
+            );
+            let sold: Vec<String> = hameaux_core::economy::Good::ALL
+                .iter()
+                .filter(|&&g| tr.sold[g as usize] >= 1.0)
+                .map(|&g| format!("{:.0} {}", tr.sold[g as usize], g.label()))
+                .collect();
+            println!("  vendu par les marchands : {}", sold.join(", "));
+            println!("— prix par village (offre/demande du dernier marché) —");
+            for (vi, v) in world.villages.iter().enumerate() {
+                let Some(m) = world.economy.markets.get(vi) else {
+                    continue;
+                };
+                let row: Vec<String> = hameaux_core::economy::Good::ALL
+                    .iter()
+                    .map(|&g| {
+                        let k = g as usize;
+                        format!(
+                            "{} {:.2} ({:.0}/{:.0})",
+                            &g.label()[..3],
+                            m.price[k],
+                            m.supply[k],
+                            m.demand[k]
+                        )
+                    })
+                    .collect();
+                println!("  {:<20} {}", v.name, row.join(" "));
+            }
             println!("— événements par type —");
             let mut kinds: Vec<_> = tally.into_iter().collect();
             kinds.sort_by_key(|k| std::cmp::Reverse(k.1));

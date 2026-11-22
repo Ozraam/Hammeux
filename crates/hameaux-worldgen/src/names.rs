@@ -4,60 +4,8 @@ use hameaux_core::{Biome, Map, map::SEA_LEVEL};
 
 use hameaux_core::rng::Rng;
 
-/// Couleurs de village (RVB), bien distinctes entre elles et sur la carte.
-pub const COLORS: [u32; 12] = [
-    0xe4572e, 0x2e86ab, 0xf3a712, 0x8e44ad, 0xc0392b, 0x16a085, 0xd35400, 0x2c3e50, 0xe84393, 0x6c5ce7,
-    0x00a8a8, 0xb8860b,
-];
-
-const BASES: &[&str] = &[
-    "Clairval",
-    "Beaupré",
-    "Montfleury",
-    "Roquebrune",
-    "Vauclair",
-    "Belcastel",
-    "Fontclaire",
-    "Hautrive",
-    "Brumeval",
-    "Chênedor",
-    "Pré-Lilas",
-    "Valjoli",
-    "Boisrond",
-    "Saint-Aubin",
-    "Malemort",
-    "Bellerive",
-    "Rocheblanche",
-    "Combefroide",
-    "Ormesson",
-    "Les Saules",
-    "La Grange",
-    "Fontenelle",
-    "Mirebeau",
-    "Aiguebelle",
-    "Champfleuri",
-    "Corbières",
-    "Vieux-Moulin",
-    "Pierrefeu",
-    "Bourg-Menthe",
-    "Sainte-Colombe",
-    "Les Trois-Puits",
-    "Herbeval",
-    "Chantemerle",
-    "Rivedoux",
-    "Montaigu",
-    "Lavalette",
-    "Noirmoutier",
-    "Glanville",
-    "Ronceval",
-    "Belair",
-    "Froidefond",
-    "Sauvebonne",
-    "Cressonnière",
-    "L'Aubépine",
-    "Mortevieille",
-    "Pommeraie",
-];
+pub use hameaux_core::names::VILLAGE_COLORS as COLORS;
+use hameaux_core::names::VILLAGES as BASES;
 
 /// Ce qui entoure un village : sert à ajouter « -sur-Mer », « -les-Bois »…
 pub struct Surroundings {

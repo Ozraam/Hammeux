@@ -180,8 +180,16 @@ async function start() {
     }
   };
 
-  // Villages : repères à taille constante à l'écran + liste cliquable.
-  const villageMarkers = info.villages.map((v) => {
+  // Villages : repères à taille constante à l'écran + liste cliquable. De nouveaux villages
+  // peuvent être fondés en cours de partie : ils apparaissent quand le serveur les annonce.
+  const panel = $<HTMLDetailsElement>("villages-panel");
+  const narrow = () => window.innerWidth < 600;
+  if (narrow()) panel.open = false;
+  const villageButtons = new Map<number, HTMLButtonElement>();
+  const villageLabel = (v: VillageView) =>
+    `<span class="swatch" style="background:${css(v.color)}"></span>${v.name}<span class="muted count">${v.population}</span>`;
+  const villageMarkers: { v: VillageView; c: Container }[] = [];
+  const addVillage = (v: VillageView) => {
     const g = new Graphics();
     g.circle(0, 0, 7).fill(v.color).stroke({ color: 0xffffff, width: 2 });
     const label = new Text({
@@ -208,22 +216,8 @@ async function start() {
       sheet.openVillage(v.id);
     });
     markers.addChild(c);
-    return { v, c };
-  });
-  // Sur téléphone, la liste replie et laisse voir la carte.
-  const panel = $<HTMLDetailsElement>("villages-panel");
-  const narrow = () => window.innerWidth < 600;
-  if (narrow()) panel.open = false;
-  const villageButtons = new Map<number, HTMLButtonElement>();
-  const villageLabel = (v: VillageView) =>
-    `<span class="swatch" style="background:${css(v.color)}"></span>${v.name}<span class="muted count">${v.population}</span>`;
-  hooks.villages = (list) => {
-    for (const v of list) {
-      const b = villageButtons.get(v.id);
-      if (b) b.innerHTML = villageLabel(v);
-    }
-  };
-  for (const v of info.villages) {
+    villageMarkers.push({ v, c });
+
     const b = document.createElement("button");
     b.type = "button";
     villageButtons.set(v.id, b);
@@ -234,7 +228,15 @@ async function start() {
       if (narrow()) panel.open = false;
     };
     villagesEl.appendChild(b);
-  }
+  };
+  for (const v of info.villages) addVillage(v);
+  hooks.villages = (list) => {
+    for (const v of list) {
+      const b = villageButtons.get(v.id);
+      if (b) b.innerHTML = villageLabel(v);
+      else addVillage(v);
+    }
+  };
   $("fit").onclick = () => {
     const s = camera.fitScale();
     camera.flyTo(map.w / 2 - 0.5, map.h / 2 - 0.5, s);

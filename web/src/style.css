@@ -104,3 +104,7 @@ table.market .num { text-align: right; font-variant-numeric: tabular-nums; white
 #panel ul.memories li { padding: 2px 0 2px 10px; border-left: 2px solid rgba(255, 255, 255, 0.15); margin: 3px 0; }
 #panel ul.memories li.good { border-left-color: var(--ok); }
 #panel ul.memories li.bad { border-left-color: var(--bad); }
+
+#panel table.links { width: 100%; border-collapse: collapse; font-size: 12px; }
+#panel table.links td, #panel table.links th { padding: 3px 4px; vertical-align: top; border-bottom: 1px solid rgba(255, 255, 255, 0.08); text-align: left; }
+#panel table.links th { color: var(--muted); font-weight: normal; }

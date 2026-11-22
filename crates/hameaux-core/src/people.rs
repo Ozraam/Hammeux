@@ -23,10 +23,12 @@ pub enum Job {
     Fisher,
     Hunter,
     Miner,
+    // Phase 5.
+    Merchant,
 }
 
 impl Job {
-    pub const ALL: [Job; 10] = [
+    pub const ALL: [Job; 11] = [
         Job::Farmer,
         Job::Woodcutter,
         Job::Quarrier,
@@ -37,6 +39,7 @@ impl Job {
         Job::Fisher,
         Job::Hunter,
         Job::Miner,
+        Job::Merchant,
     ];
 
     pub fn label(self, female: bool) -> &'static str {
@@ -61,6 +64,8 @@ impl Job {
             (Job::Hunter, true) => "chasseuse",
             (Job::Miner, false) => "mineur",
             (Job::Miner, true) => "mineuse",
+            (Job::Merchant, false) => "marchand",
+            (Job::Merchant, true) => "marchande",
         }
     }
 }
@@ -77,6 +82,8 @@ pub enum Status {
 pub enum Carry {
     Good(Good),
     Bundle,
+    /// Charrette de marchand.
+    Cart,
 }
 
 /// Ce que fait un habitant (pour l'affichage).
@@ -107,6 +114,8 @@ pub enum Act {
     Milling,
     Baking,
     Forging,
+    Travelling,
+    Trading,
 }
 
 impl Act {
@@ -136,6 +145,8 @@ impl Act {
             Act::Milling => "moud du grain",
             Act::Baking => "cuit du pain",
             Act::Forging => "forge des outils",
+            Act::Travelling => "voyage",
+            Act::Trading => "attend le marché",
         }
     }
 }
@@ -145,6 +156,7 @@ impl Carry {
         match self {
             Carry::Good(g) => g.partitive(),
             Carry::Bundle => "son baluchon",
+            Carry::Cart => "sa charrette",
         }
     }
 }
@@ -172,6 +184,15 @@ pub enum Step {
     Talk(u32),
     /// Entrer chez soi (dormir).
     Hide,
+    /// Dormir là où l'on est (à l'auberge d'un autre village).
+    HideHere,
+    /// Voyage vers un autre village par la route (`back` : retour au village).
+    Journey {
+        to: u32,
+        back: bool,
+    },
+    /// Arrivée au bout d'un voyage.
+    Arrive,
     /// Quitter le village pour de bon.
     Leave,
 }
@@ -190,6 +211,8 @@ pub struct Brain {
     pub carry_amount: f32,
     pub hidden: bool,
     pub leaving: bool,
+    /// En voyage entre deux villages (les changements d'heure ne l'interrompent pas).
+    pub traveling: bool,
     /// Intention en cours (ce que le plan cherche à accomplir).
     pub intent: Intent,
 }

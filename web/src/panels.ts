@@ -139,7 +139,7 @@ export class Panel {
     return `
       <button class="close" data-close aria-label="Fermer">×</button>
       <h2><span class="swatch" style="background:${css(v.color)}"></span>${esc(v.name)}</h2>
-      <p class="sub">${esc(v.founded)}</p>
+      <p class="sub">${esc(v.founded)}${v.founded_from ? ` par des familles de <a data-village="${v.founded_from.id}">${esc(v.founded_from.name)}</a>` : ""}</p>
       <div class="row"><button data-goto="${v.x + 1},${v.y + 1}">Aller au village</button></div>
       <dl>
         <dt>Habitants</dt><dd>${v.population} (dont ${v.children} enfants, ${v.elders} aînés)</dd>
@@ -162,6 +162,17 @@ export class Panel {
           })
           .join("")}
       </table>
+      ${v.merchants.length ? `<h3>Marchands</h3><ul>${v.merchants.map((r) => `<li><a data-person="${r.id}">${esc(r.name)}</a> <span class="muted">· ${esc(r.note)}</span></li>`).join("")}</ul>` : ""}
+      ${v.links.length ? `<h3>Autres villages</h3><table class="links">
+        <tr><th></th><th>trajet</th><th>nouvelles</th></tr>
+        ${v.links
+          .map(
+            (l) => `<tr><td><a data-village="${l.village.id}">${esc(l.village.name)}</a>${l.dearer.length ? `<br><span class="muted">plus cher là-bas : ${l.dearer.map(esc).join(", ")}</span>` : ""}</td>
+              <td>${l.way ? `${esc(l.way)}${l.trips ? ` <span class="muted">(${l.trips})</span>` : ""}` : "—"}</td>
+              <td class="muted">${esc(l.news) || "aucune"}</td></tr>`,
+          )
+          .join("")}
+      </table>` : ""}
       <h3>Derniers événements</h3>${this.eventsHtml(v.events, false)}
     `;
   }

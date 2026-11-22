@@ -85,7 +85,8 @@ impl World {
         // Les enfants de la partie apprennent un peu en regardant leurs parents.
         let watched = parents.iter().any(|&q| self.people[q as usize].job == Some(job));
         let p = &mut self.people[i];
-        p.mind.skills[job as usize] = p.mind.skills[job as usize].max(if watched { 0.2 } else { 0.08 });
+        let s = p.mind.skill_mut(job);
+        *s = s.max(if watched { 0.2 } else { 0.08 });
         let mut text = format!("{} devient {}", p.first, job.label(p.female));
         let mut who = vec![id];
         self.pick_goals(i);
@@ -206,6 +207,30 @@ impl World {
                 Some(_) => continue,
                 None => {
                     if !self.rng.chance(PAIRING_PER_DAY * 0.6) {
+                        continue;
+                    }
+                    // Parfois, l'âme sœur vit dans un village que les marchands fréquentent.
+                    if self.rng.chance(0.25)
+                        && let Some(j) = self.distant_match(i)
+                    {
+                        self.couple(i as u32, j);
+                        if self.join_partner_village(i as u32, j) {
+                            self.heartbreak(i as u32, j);
+                            for (x, y) in [(i as u32, j), (j, i as u32)] {
+                                self.feel(
+                                    x as usize,
+                                    MemoryKind::PartnerFound,
+                                    Some(y),
+                                    0.9,
+                                    Emotion::Joy,
+                                    0.6,
+                                );
+                            }
+                        } else {
+                            // Personne n'a de place pour les accueillir : ce ne sera pas pour cette fois.
+                            self.people[i].partner = None;
+                            self.people[j as usize].partner = None;
+                        }
                         continue;
                     }
                     let p = &self.people[i];
@@ -555,7 +580,7 @@ impl World {
     }
 
     /// Une case praticable à environ `dist` cases du village (pour arriver ou partir).
-    fn far_tile(&mut self, vi: usize, dist: i64) -> (u32, u32) {
+    pub(crate) fn far_tile(&mut self, vi: usize, dist: i64) -> (u32, u32) {
         let (cx, cy) = (self.villages[vi].x as i64, self.villages[vi].y as i64);
         for _ in 0..30 {
             let a = self.rng.f32() * std::f32::consts::TAU;
@@ -595,6 +620,10 @@ impl World {
 
     /// Disette : une famille affamée s'en va, et parfois ses meilleurs amis avec elle.
     pub(super) fn famine_leave_house(&mut self, vi: usize, hid: u32) {
+        // Un village voisin qui mange à sa faim les accueille peut-être.
+        if self.rng.chance(0.7) && self.migrate_household(vi, hid) {
+            return;
+        }
         let id = self.villages[vi].id;
         let Some(h) = self.villages[vi].house(hid) else {
             return;

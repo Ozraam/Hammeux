@@ -259,6 +259,18 @@ impl World {
                     buy[k][gi] = target[gi] - h.inv[gi];
                 }
             }
+            // On aime varier : de la viande ou du poisson deux jours par semaine. On en prend
+            // moins quand c'est cher (plus du tout à deux fois et demie le prix habituel).
+            // C'est ce qui fait venir le poisson de la côte dans les villages de l'intérieur.
+            let protein = h.inv[Good::Meat as usize] + h.inv[Good::Fish as usize];
+            let want = members.len() as f32 * 2.0 - protein;
+            if want > 0.5 {
+                for g in [Good::Meat, Good::Fish] {
+                    let base = g.base_price();
+                    let keen = ((2.5 * base - price[g as usize]) / base).clamp(0.0, 1.0);
+                    buy[k][g as usize] += want / 2.0 * keen;
+                }
+            }
             // Nourriture : au-delà d'une semaine de réserve, on vend, en commençant par ce qu'on aime le moins.
             let rations: f32 = Good::FOODS
                 .iter()
@@ -325,9 +337,15 @@ impl World {
         let mut supply = [0.0f32; GOODS];
         let mut demand = [0.0f32; GOODS];
         let mut traded = [0.0f32; GOODS];
-        for k in 0..n {
+        // Les marchands de passage vendent toute leur cargaison.
+        let visitors = self.market_sellers(vi);
+        let mut offers = sell.clone();
+        for p in &visitors {
+            offers.push(self.trade.traders[p].cargo);
+        }
+        for row in &offers {
             for g in 0..GOODS {
-                supply[g] += sell[k][g];
+                supply[g] += row[g];
             }
         }
         let mut left = supply;
@@ -417,6 +435,16 @@ impl World {
         }
         self.villages[vi].stock.food = (self.villages[vi].stock.food + relief_got).min(MAX_FOOD);
 
+        // Les marchands chargent leur charrette avec ce qui reste.
+        for p in self.market_buyers(vi) {
+            let bought = self.trader_purchase(p, &price, &left);
+            for g in 0..GOODS {
+                left[g] -= bought[g];
+                traded[g] += bought[g];
+                demand[g] += bought[g];
+            }
+        }
+
         // Paiement des vendeurs, taxe au village. Les acheteurs préfèrent le travail des
         // meilleurs : quand tout ne se vend pas, ce qui vient d'un maître part d'abord, et à
         // prix moyen égal, il se paie plus cher que celui d'un débutant (de ×0,8 à ×1,2).
@@ -428,9 +456,20 @@ impl World {
             let worth: Vec<f32> = homes
                 .iter()
                 .map(|(_, members)| 0.8 + 0.4 * self.quality(members, Good::ALL[g]))
+                .chain(visitors.iter().map(|_| 1.0))
                 .collect();
-            let sold = share_by_quality(&sell, g, traded[g], &worth);
-            let paid: f32 = (0..n).map(|k| sold[k] * worth[k]).sum::<f32>().max(1e-6);
+            let sold = share_by_quality(&offers, g, traded[g], &worth);
+            let paid: f32 = (0..offers.len())
+                .map(|k| sold[k] * worth[k])
+                .sum::<f32>()
+                .max(1e-6);
+            for (v, &p) in visitors.iter().enumerate() {
+                let k = n + v;
+                let money = traded[g] * price[g] * sold[k] * worth[k] / paid;
+                // (Les recettes des marchands ne comptent pas comme revenu d'un métier d'ici.)
+                treasury += money * TAX;
+                self.trader_sold(p, g, sold[k], money * (1.0 - TAX));
+            }
             for k in 0..n {
                 let units = sold[k];
                 let money = traded[g] * price[g] * units * worth[k] / paid;
@@ -468,12 +507,13 @@ impl World {
         let m = &mut self.economy.markets[vi];
         for g in 0..GOODS {
             let (d, s) = (demand[g], supply[g]);
+            let base = Good::ALL[g].base_price();
+            // Rien ne s'échange : le prix revient doucement vers le prix habituel.
             let change = if d + s <= 0.0 {
-                0.0
+                0.03 * (base / m.price[g] - 1.0).clamp(-1.0, 1.0)
             } else {
                 0.12 * (d - s) / (d + s + 1.0)
             };
-            let base = Good::ALL[g].base_price();
             m.price[g] = (m.price[g] * (1.0 + change.clamp(-0.12, 0.12))).clamp(base * 0.3, base * 5.0);
         }
         m.supply = supply;
@@ -644,7 +684,7 @@ impl World {
                 let e = &mut self.economy.income[vi][j];
                 *e = *e * 0.9 + per * 0.1;
             }
-            self.economy.today[vi] = [0.0; JOBS];
+            self.economy.today[vi] = vec![0.0; JOBS];
         }
     }
 
@@ -673,6 +713,7 @@ impl World {
             Job::Miller => 20.0 * (p(Good::Flour) - p(Good::Grain)).max(0.0),
             Job::Baker => 15.0 * (1.1 * p(Good::Bread) - p(Good::Flour) - p(Good::Wood) / 6.0).max(0.0),
             Job::Smith => 2.0 * (p(Good::Tools) - 2.0 * p(Good::Ore) - 2.0 * p(Good::Wood)).max(0.0),
+            Job::Merchant => self.trade_potential(vi),
             Job::Builder => {
                 // Payé par voyage : vaut d'autant plus que des chantiers attendent sans bâtisseur.
                 let tick = self.tick;
@@ -727,6 +768,9 @@ impl World {
                 Job::Miller => count(j) < shops(Workshop::Mill),
                 Job::Baker => count(j) < shops(Workshop::Bakery),
                 Job::Smith => count(j) < shops(Workshop::Smithy),
+                // Un marchand dès quinze habitants, un de plus par trentaine, s'il y a des
+                // voisins à portée.
+                Job::Merchant => pop >= 15 && count(j) < 1 + pop / 30 && !self.neighbours(vi).is_empty(),
             })
             .collect()
     }
@@ -740,6 +784,15 @@ impl World {
                 continue;
             }
             let Some(job) = p.job else { continue };
+            // Un marchand ne change pas de métier en plein voyage.
+            if self
+                .trade
+                .traders
+                .get(&p.id)
+                .is_some_and(|t| t.leg != crate::trade::Leg::Idle)
+            {
+                continue;
+            }
             if !self.rng.chance(1.0 / 56.0) {
                 continue;
             }

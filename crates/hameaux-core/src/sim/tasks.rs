@@ -49,7 +49,10 @@ impl World {
         let tick = self.tick;
         let width = self.map.width;
         let p = &mut self.people[i];
+        // Les charrettes vont plus vite sur les routes.
+        let road = p.brain.traveling && self.map.road_at(p.tile(width) as usize);
         let mut budget = WALK
+            * if road { 1.4 } else { 1.0 }
             * if p.child(tick) {
                 0.85
             } else if p.elder(tick) {
@@ -195,6 +198,14 @@ impl World {
             }
             Step::Craft(wid) => self.craft(i, wid),
             Step::Talk(j) => self.talk(i, j as usize),
+            Step::HideHere => {
+                let b = &mut self.people[i].brain;
+                b.hidden = true;
+                b.carry = None;
+                b.act = Act::Sleeping;
+            }
+            Step::Journey { to, back } => self.journey(i, to, back),
+            Step::Arrive => self.trade_arrive(i),
             Step::Hide => {
                 if let Some((x, y)) = self.home_tile(i) {
                     let p = &mut self.people[i];
@@ -276,6 +287,9 @@ impl World {
         if self.people[i].brain.leaving {
             self.people[i].brain.intent = Intent::Leave;
             self.plan(i, [Step::Leave]);
+            return;
+        }
+        if self.trader_assign(i) {
             return;
         }
         let part = day_part(self.clock().hour);
@@ -425,8 +439,8 @@ impl World {
 
     /// Quelqu'un qu'on peut aller voir maintenant (dehors, au village, pas en partance).
     fn available(&self, q: usize) -> bool {
-        let q = &self.people[q];
-        q.alive() && !q.brain.hidden && !q.brain.leaving
+        let p = &self.people[q];
+        p.alive() && !p.brain.hidden && !p.brain.leaving && !p.brain.traveling && !self.away(q)
     }
 
     /// Un ami (affection d'au moins 15, pas un rival) disponible, tiré au sort selon l'affection.
@@ -567,8 +581,13 @@ impl World {
             ],
         );
         let fi = f as usize;
+        let busy = self
+            .trade
+            .traders
+            .get(&f)
+            .is_some_and(|t| t.leg != crate::trade::Leg::Idle);
         let fb = &mut self.people[fi].brain;
-        if fb.carry.is_none() && fb.wait == 0 {
+        if fb.carry.is_none() && fb.wait == 0 && !busy {
             fb.plan.clear();
             fb.path.clear();
             fb.path_pos = 0;
@@ -660,7 +679,7 @@ impl World {
     }
 
     /// Une case libre et praticable près de chez soi (ou du grenier).
-    fn spot_near(&mut self, cx: u32, cy: u32, r: i64) -> u32 {
+    pub(super) fn spot_near(&mut self, cx: u32, cy: u32, r: i64) -> u32 {
         for _ in 0..12 {
             let x = cx as i64 + self.rng.range(-r, r);
             let y = cy as i64 + self.rng.range(-r, r);
@@ -749,6 +768,7 @@ impl World {
             Some(Job::Baker) => self.workshop_work(i, vi, Workshop::Bakery),
             Some(Job::Smith) => self.workshop_work(i, vi, Workshop::Smithy),
             Some(Job::Farmer) => self.farm(i, vi),
+            Some(Job::Merchant) => self.merchant_work(i, vi),
             _ => false,
         };
         if !done {

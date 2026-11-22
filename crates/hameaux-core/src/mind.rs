@@ -445,8 +445,8 @@ pub struct Mind {
     pub mood: Mood,
     pub memories: Vec<Memory>,
     pub relations: BTreeMap<u32, Relation>,
-    /// Compétence par métier (0–1), indexée par `Job as usize`.
-    pub skills: [f32; JOBS],
+    /// Compétence par métier (0–1), indexée par `Job as usize` (absente = 0).
+    pub skills: Vec<f32>,
     pub goals: Vec<LifeGoal>,
 }
 
@@ -471,13 +471,20 @@ impl Mind {
     }
 
     pub fn skill(&self, job: Job) -> f32 {
-        self.skills[job as usize]
+        self.skills.get(job as usize).copied().unwrap_or(0.0)
+    }
+
+    pub fn skill_mut(&mut self, job: Job) -> &mut f32 {
+        if self.skills.len() < JOBS {
+            self.skills.resize(JOBS, 0.0);
+        }
+        &mut self.skills[job as usize]
     }
 
     /// Progrès dans un métier : rapide jusqu'à 0,5, puis de plus en plus lent (la maîtrise
     /// demande des années). Vrai si l'on vient de passer maître.
     pub fn practice(&mut self, job: Job, rate: f32) -> bool {
-        let s = &mut self.skills[job as usize];
+        let s = self.skill_mut(job);
         let before = *s;
         let slow = if *s > 0.5 { 2.0 * (1.0 - *s) } else { 1.0 };
         *s = (*s + rate.max(0.0) * (1.0 - *s) * slow).min(1.0);

@@ -9,6 +9,7 @@ mod life;
 mod market;
 mod mind;
 mod tasks;
+mod trade;
 
 pub use mind::{INTENT_LABELS, LEVEL_LABELS, MindStats, skill_level};
 
@@ -64,6 +65,7 @@ impl World {
                     self.reconsider_jobs();
                     self.daily();
                     self.daily_minds();
+                    self.daily_trade();
                 }
                 _ => {}
             }
@@ -97,7 +99,8 @@ impl World {
                 continue;
             }
             self.people[i].brain = Default::default();
-            if night {
+            // Un marchand en voyage reprend sa route (ou dort à l'auberge) : voir `trader_assign`.
+            if night && !self.away(i) {
                 self.send_home(i);
             }
         }
@@ -134,7 +137,7 @@ impl World {
         for p in self
             .people
             .iter_mut()
-            .filter(|p| p.alive() && !p.brain.leaving && !p.brain.hidden)
+            .filter(|p| p.alive() && !p.brain.leaving && !p.brain.hidden && !p.brain.traveling)
         {
             p.brain.plan.clear();
             p.brain.path.clear();

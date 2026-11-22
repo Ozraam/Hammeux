@@ -8,6 +8,9 @@ const LERP_MS = 260;
 const ROOFS = [0xb5523b, 0x8e3b2f, 0x6b4c3b, 0x9c6b3e, 0x7a5a8a, 0x4f6d7a];
 const SHIRTS = [0xd94f3d, 0x3d6fd9, 0xe0b13a, 0x4caf6b, 0x8e5fc2, 0xe07b39, 0x2fa7a7, 0xf2f2f2];
 /** Couleur de ce qui est porté : index du bien + 1 (voir `Good`), 255 = baluchon. */
+/** Code `carry` d'une charrette de marchand. */
+const CART = 254;
+
 const CARRY: Record<number, number> = {
   1: 0xe6c35c, // grain
   2: 0xf2ead8, // farine
@@ -205,7 +208,12 @@ export class SceneLayer {
       }
       g.circle(p.x, p.y, r).fill(shirt).stroke({ color: 0x1e1a14, width: r * 0.35 });
       if (dot.stage === 2) g.circle(p.x, p.y - r * 0.2, r * 0.45).fill(0xdddddd);
-      if (dot.carry) {
+      if (dot.carry === CART) {
+        // Charrette : caisse brune et deux roues.
+        g.rect(p.x - r * 2.6, p.y - r * 0.9, r * 1.8, r * 1.2).fill(0x8a5a2b).stroke({ color: 0x1e1a14, width: r * 0.2 });
+        g.circle(p.x - r * 2.3, p.y + r * 0.45, r * 0.4).fill(0x3a2a1a);
+        g.circle(p.x - r * 1.1, p.y + r * 0.45, r * 0.4).fill(0x3a2a1a);
+      } else if (dot.carry) {
         g.rect(p.x + r * 0.6, p.y - r * 1.4, r * 1.1, r * 1.1).fill(CARRY[dot.carry] ?? 0x888888).stroke({ color: 0x1e1a14, width: r * 0.2 });
       }
       if (dot.act === ACT_CHATTING) {

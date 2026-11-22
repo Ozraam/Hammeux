@@ -13,7 +13,7 @@ use crate::{
 };
 
 /// Progrès d'une séance de travail (plus pour les rigoureux), avant ralentissement.
-const PRACTICE: f32 = 0.0016;
+const PRACTICE: f32 = 0.0012;
 /// Apprentis qu'un maître forme à la fois.
 pub(crate) const APPRENTICES_PER_MASTER: usize = 2;
 
@@ -591,7 +591,7 @@ impl World {
             return tool;
         };
         let rigor = self.people[i].mind.traits.rigor;
-        self.improve(i, job, PRACTICE + 0.0026 * rigor);
+        self.improve(i, job, PRACTICE + 0.002 * rigor);
         let p = &mut self.people[i];
         let skill = p.mind.skill(job);
         let mood = 1.0 + 0.08 * p.mind.mood.valence() - if p.mind.needs.sleep < 0.15 { 0.1 } else { 0.0 };
@@ -638,7 +638,7 @@ impl World {
         let years = (p.age(tick) - ADULT_AGE).max(0.0);
         let base = (0.15 + years * 0.015).min(0.65);
         let s = (base * (0.8 + 0.4 * self.rng.f32())).min(0.85);
-        self.people[i].mind.skills[job as usize] = s;
+        *self.people[i].mind.skill_mut(job) = s;
     }
 
     // ------------------------------------------------------------------ entraide

@@ -27,7 +27,7 @@ pub struct PersonDot {
     pub stage: u8,
     /// Index de `Act`.
     pub act: u8,
-    /// Ce qu'il porte : 0 rien, 1 + index du bien (`Good`), 255 son baluchon.
+    /// Ce qu'il porte : 0 rien, 1 + index du bien (`Good`), 254 une charrette, 255 son baluchon.
     pub carry: u8,
     /// Vêtement, peau, cheveux.
     pub looks: [u8; 3],
@@ -170,6 +170,7 @@ impl Scene {
                     None => 0,
                     Some(Carry::Good(g)) => g as u8 + 1,
                     Some(Carry::Bundle) => 255,
+                    Some(Carry::Cart) => 254,
                 },
                 looks: p.looks,
             });
@@ -378,9 +379,35 @@ impl PersonSheet {
                 doing = format!("construit la maison des {}", h.family);
             }
         }
+        // Marchand : où il en est de son voyage.
+        if let Some(t) = world.trade.traders.get(&id).filter(|_| p.alive()) {
+            use hameaux_core::trade::Leg;
+            let place = world.village_name(t.dest);
+            let cargo: Vec<String> = Good::ALL
+                .iter()
+                .filter(|&&g| t.cargo[g as usize] >= 1.0)
+                .map(|&g| format!("{:.0} {}", t.cargo[g as usize], g.label()))
+                .collect();
+            let with = if cargo.is_empty() {
+                String::new()
+            } else {
+                format!(" avec {}", cargo.join(", "))
+            };
+            match t.leg {
+                Leg::Idle => {}
+                Leg::Buying => {
+                    doing = format!("attend le marché pour charger sa charrette (part pour {place})")
+                }
+                Leg::Outbound => doing = format!("en route vers {place}{with}"),
+                Leg::Selling if p.brain.hidden => doing = format!("dort à l'auberge de {place}"),
+                Leg::Selling => doing = format!("attend le marché de {place}{with}"),
+                Leg::Returning => doing = format!("rentre de {place}{with}"),
+            }
+        }
         if let Some(c) = p.brain.carry
             && p.alive()
             && !p.brain.hidden
+            && c != Carry::Cart
         {
             doing += &format!(" (porte {})", c.label());
         }
@@ -626,7 +653,34 @@ pub struct VillageSheet {
     /// Ateliers construits.
     pub workshops: Vec<String>,
     pub market: Vec<PriceRow>,
+    /// Liens avec les autres villages (routes, nouvelles), du plus fréquenté au moins.
+    pub links: Vec<LinkView>,
+    /// Marchands du village.
+    pub merchants: Vec<PersonRef>,
+    /// Village d'où sont venus les fondateurs (s'il a été fondé en cours de partie).
+    pub founded_from: Option<VillageRef>,
     pub events: Vec<EventView>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct VillageRef {
+    pub id: u32,
+    pub name: String,
+}
+
+/// Ce qui relie un village à un autre.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct LinkView {
+    pub village: VillageRef,
+    /// « route », « chemin » (trajet connu mais pas encore tracé), ou vide.
+    pub way: String,
+    pub trips: u32,
+    /// Âge des dernières nouvelles de ses prix (« il y a 3 jours »), vide si on n'en sait rien.
+    pub news: String,
+    /// Ce qui s'y vend bien plus cher qu'ici, d'après ces nouvelles.
+    pub dearer: Vec<String>,
 }
 
 /// Un bien sur le marché d'un village.
@@ -749,6 +803,25 @@ impl VillageSheet {
                 .filter_map(|h| world.economy.workshops.get(&h.id).map(|w| w.label().to_string()))
                 .collect(),
             market,
+            links: links(world, vi),
+            merchants: world
+                .trade
+                .traders
+                .keys()
+                .filter(|&&p| world.people[p as usize].village == id && world.people[p as usize].alive())
+                .map(|&p| {
+                    let t = &world.trade.traders[&p];
+                    person_ref(
+                        world,
+                        p,
+                        format!("{} voyages, {:.0} sous gagnés", t.trips, t.profit),
+                    )
+                })
+                .collect(),
+            founded_from: world.trade.founded_from.get(&id).map(|&o| VillageRef {
+                id: o,
+                name: world.village_name(o),
+            }),
             events: world
                 .chronicle
                 .events
@@ -827,4 +900,58 @@ impl MapChanges {
             chunks,
         }
     }
+}
+
+/// Liens d'un village avec les autres : trajets parcourus et nouvelles reçues.
+fn links(world: &World, vi: usize) -> Vec<LinkView> {
+    let id = world.villages[vi].id;
+    let here = world.economy.markets.get(vi).map(|m| m.price);
+    let known = world.trade.news.get(&id);
+    let mut out: Vec<LinkView> = world
+        .villages
+        .iter()
+        .filter(|v| v.id != id)
+        .filter_map(|v| {
+            let route = world.trade.route(id, v.id).filter(|r| r.reachable());
+            let news = known.and_then(|k| k.get(&v.id));
+            if route.is_none_or(|r| r.trips == 0 && !r.road) && news.is_none() {
+                return None;
+            }
+            let trips = route.map_or(0, |r| r.trips);
+            let way = match route {
+                Some(r) if r.road => "route",
+                Some(r) if r.trips > 0 => "chemin",
+                _ => "",
+            };
+            let (news_label, dearer) = match (news, here) {
+                (Some(n), Some(here)) => {
+                    let days = world.tick.saturating_sub(n.tick) / hameaux_core::tuning::DAY;
+                    let label = match days {
+                        0 => "aujourd'hui".to_string(),
+                        1 => "hier".to_string(),
+                        d => format!("il y a {d} jours"),
+                    };
+                    let dearer = Good::ALL
+                        .iter()
+                        .filter(|&&g| n.price[g as usize] > here[g as usize] * 1.5)
+                        .map(|g| g.label().to_string())
+                        .collect();
+                    (label, dearer)
+                }
+                _ => (String::new(), Vec::new()),
+            };
+            Some(LinkView {
+                village: VillageRef {
+                    id: v.id,
+                    name: v.name.clone(),
+                },
+                way: way.into(),
+                trips,
+                news: news_label,
+                dearer,
+            })
+        })
+        .collect();
+    out.sort_by_key(|l| std::cmp::Reverse((l.trips, !l.news.is_empty())));
+    out
 }
