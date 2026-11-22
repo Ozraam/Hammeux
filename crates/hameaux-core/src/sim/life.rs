@@ -2,6 +2,7 @@
 
 use crate::{
     clock::Season,
+    mind::{Emotion, MemoryKind},
     names,
     people::{Act, Status, Step},
     settlement::HouseState,
@@ -39,6 +40,7 @@ impl World {
         p.brain = Default::default();
         let home = p.home.take();
         let text = format!("Décès {} à {age} ans", de(&p.name()));
+        self.mourn(i);
         if let Some(vi) = self.village_index(village)
             && let Some(h) = home.and_then(|h| self.villages[vi].house_mut(h))
         {
@@ -54,9 +56,22 @@ impl World {
         let village = self.people[i].village;
         // Un maître du même métier, de préférence un parent.
         let parents = self.people[i].parents.clone();
+        // Seul un maître prend des apprentis (deux à la fois au plus).
+        let pupils = |m: u32| {
+            self.alive()
+                .filter(|p| p.master == Some(m) && tick < p.apprentice_until)
+                .count()
+        };
         let master = self
             .alive()
-            .filter(|q| q.village == village && q.id != id && q.job == Some(job) && !q.elder(tick))
+            .filter(|q| {
+                q.village == village
+                    && q.id != id
+                    && q.job == Some(job)
+                    && !q.elder(tick)
+                    && q.mind.skill(job) >= crate::mind::MASTERY
+            })
+            .filter(|q| pupils(q.id) < super::mind::APPRENTICES_PER_MASTER)
             .min_by_key(|q| if parents.contains(&q.id) { 0 } else { 1 })
             .map(|q| q.id);
         let p = &mut self.people[i];
@@ -67,9 +82,18 @@ impl World {
         } else {
             0
         };
+        // Les enfants de la partie apprennent un peu en regardant leurs parents.
+        let watched = parents.iter().any(|&q| self.people[q as usize].job == Some(job));
+        let p = &mut self.people[i];
+        p.mind.skills[job as usize] = p.mind.skills[job as usize].max(if watched { 0.2 } else { 0.08 });
         let mut text = format!("{} devient {}", p.first, job.label(p.female));
         let mut who = vec![id];
+        self.pick_goals(i);
         if let Some(m) = master {
+            self.feel(i, MemoryKind::Apprenticed, Some(m), 0.45, Emotion::Joy, 0.3);
+            let r = self.people[i].mind.rel_mut(m);
+            r.respect = r.respect.max(40.0);
+            r.trust = r.trust.max(30.0);
             text += &format!(" auprès {}", de(&self.people[m as usize].first));
             who.push(m);
         }
@@ -111,6 +135,18 @@ impl World {
             let female = self.rng.chance(0.5);
             let child = self.new_person(vi, &last, female, 0.0, Some(home), &[mother, father]);
             self.send_home(child as usize);
+            for parent in [mother, father] {
+                self.feel(
+                    parent as usize,
+                    MemoryKind::ChildBorn,
+                    Some(child),
+                    0.9,
+                    Emotion::Joy,
+                    0.7,
+                );
+                let m = &mut self.people[parent as usize].mind;
+                m.needs.meaning = (m.needs.meaning + 0.3).min(1.0);
+            }
             let text = format!(
                 "Naissance {} chez {} et {}",
                 de(&self.people[child as usize].first),
@@ -122,14 +158,14 @@ impl World {
         }
     }
 
-    fn related(&self, a: u32, b: u32) -> bool {
+    pub(super) fn related(&self, a: u32, b: u32) -> bool {
         let (pa, pb) = (&self.people[a as usize], &self.people[b as usize]);
         pa.parents.contains(&b)
             || pb.parents.contains(&a)
             || pa.parents.iter().any(|x| pb.parents.contains(x))
     }
 
-    fn single(&self, i: usize) -> bool {
+    pub(super) fn single(&self, i: usize) -> bool {
         let tick = self.tick;
         let p = &self.people[i];
         let age = p.age(tick);
@@ -139,35 +175,71 @@ impl World {
             && p.partner.is_none_or(|q| !self.people[q as usize].alive())
     }
 
-    /// Les célibataires d'un même village se trouvent ; ils s'installent ensemble.
+    /// Les célibataires d'un même village se trouvent : d'abord ceux qui se plaisent (la cour
+    /// faite au puits fait monter l'attirance), sinon, plus rarement, des unions arrangées.
+    /// Ils s'installent ensemble.
     fn pairing(&mut self) {
-        let tick = self.tick;
         for i in 0..self.people.len() {
-            if !self.single(i) || !self.rng.chance(PAIRING_PER_DAY) {
+            if !self.single(i) {
                 continue;
             }
-            let p = &self.people[i];
-            let want_female = if self.rng.chance(0.9) {
-                Some(!p.female)
-            } else {
-                None
-            };
-            let candidates: Vec<u32> = (0..self.people.len())
-                .filter(|&j| j != i && self.single(j))
-                .filter(|&j| {
-                    let q = &self.people[j];
-                    q.village == p.village
-                        && want_female.is_none_or(|f| q.female == f)
-                        && (q.age(tick) - p.age(tick)).abs() <= 12.0
-                        && !self.related(p.id, q.id)
-                })
-                .map(|j| j as u32)
-                .collect();
-            let Some(&j) = self.rng.pick(&candidates) else {
-                continue;
+            let me = self.people[i].id;
+            // Le béguin réciproque le plus fort.
+            let mut best: Option<(f32, u32)> = None;
+            for (&q, r) in &self.people[i].mind.relations {
+                let j = q as usize;
+                if r.attraction < 25.0 || !self.could_pair(i, j) {
+                    continue;
+                }
+                let back = self.people[j].mind.rel(me).attraction;
+                if back < 20.0 {
+                    continue;
+                }
+                let score = r.attraction + back + 0.3 * (r.affection + self.people[j].mind.affection(me));
+                if best.is_none_or(|b| score > b.0) {
+                    best = Some((score, q));
+                }
+            }
+            let j = match best {
+                // Plus l'attirance est forte, plus la demande vient vite.
+                Some((score, q)) if self.rng.chance((score / 400.0).min(0.5)) => q,
+                Some(_) => continue,
+                None => {
+                    if !self.rng.chance(PAIRING_PER_DAY * 0.6) {
+                        continue;
+                    }
+                    let p = &self.people[i];
+                    let want_female = if self.rng.chance(0.9) {
+                        Some(!p.female)
+                    } else {
+                        None
+                    };
+                    let candidates: Vec<u32> = (0..self.people.len())
+                        .filter(|&j| j != i && self.could_pair(i, j))
+                        .filter(|&j| want_female.is_none_or(|f| self.people[j].female == f))
+                        // On n'épouse pas son rival.
+                        .filter(|&j| self.people[i].mind.rel(j as u32).rivalry < 30.0)
+                        .map(|j| j as u32)
+                        .collect();
+                    let Some(&j) = self.rng.pick(&candidates) else {
+                        continue;
+                    };
+                    j
+                }
             };
             let a = i as u32;
             self.couple(a, j);
+            self.heartbreak(a, j);
+            for (x, y) in [(a, j), (j, a)] {
+                self.feel(
+                    x as usize,
+                    MemoryKind::PartnerFound,
+                    Some(y),
+                    0.9,
+                    Emotion::Joy,
+                    0.6,
+                );
+            }
             let village = self.people[i].village;
             let (na, nb) = (
                 self.people[i].first.clone(),
@@ -439,6 +511,7 @@ impl World {
         }
         self.open_household(hid, coins, grain);
         self.move_in(m, hid);
+        self.feel(m as usize, MemoryKind::NewHome, None, 0.6, Emotion::Joy, 0.4);
         let name = self.people[m as usize].first.clone();
         let place = if built {
             "leur nouvelle maison"
@@ -448,6 +521,7 @@ impl World {
         match partner {
             Some(q) => {
                 self.move_in(q, hid);
+                self.feel(q as usize, MemoryKind::NewHome, None, 0.6, Emotion::Joy, 0.4);
                 let other = self.people[q as usize].first.clone();
                 self.event(
                     Some(id),
@@ -504,12 +578,14 @@ impl World {
         let Some(vi) = self.village_index(self.people[i].village) else {
             return;
         };
+        self.miss(i);
         let (x, y) = self.far_tile(vi, 30);
         let night = day_part(self.clock().hour) == DayPart::Night;
         let width = self.map.width;
         let p = &mut self.people[i];
         p.brain = Default::default();
         p.brain.leaving = true;
+        p.brain.intent = crate::people::Intent::Leave;
         p.brain.carry = Some(crate::people::Carry::Bundle);
         p.brain.plan.extend([Step::Go(y * width + x), Step::Leave]);
         if night {
@@ -534,15 +610,21 @@ impl World {
         }
         for &r in &residents {
             let best = self.people[r as usize]
-                .friends
+                .mind
+                .relations
                 .iter()
-                .filter(|&(&f, &s)| {
-                    s >= 20.0 && self.people[f as usize].alive() && !self.people[f as usize].brain.leaving
+                .filter(|&(&f, r)| {
+                    r.affection >= 20.0
+                        && self.people[f as usize].alive()
+                        && !self.people[f as usize].brain.leaving
                 })
-                .max_by(|a, b| a.1.total_cmp(b.1))
+                .max_by(|a, b| a.1.affection.total_cmp(&b.1.affection))
                 .map(|(&f, _)| f);
+            // Les plus attachés à leur village hésitent davantage à suivre.
             if let Some(f) = best
-                && self.rng.chance(0.35)
+                && self
+                    .rng
+                    .chance(0.5 * (1.1 - self.people[f as usize].mind.traits.attachment))
                 && let Some(fh) = self.people[f as usize].home
                 && let Some(house) = self.villages[vi].house(fh)
             {

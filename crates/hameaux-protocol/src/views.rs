@@ -4,10 +4,10 @@ use hameaux_core::{
     Clock, World,
     economy::{Good, Workshop},
     events::Event,
+    mind::{NEED_LABELS, feminine},
     people::Carry,
     people::{Person, Status},
     settlement::{FieldState, HouseState},
-    sim::lien_de,
     tuning::{FIELD_SIZE, YEAR},
 };
 use serde::{Deserialize, Serialize};
@@ -229,12 +229,62 @@ pub struct PersonSheet {
     pub hidden: bool,
     /// Famille proche : conjoint, parents, enfants, frères et sœurs.
     pub family: Vec<PersonRef>,
-    /// Meilleurs amis (score dans `note`).
-    pub friends: Vec<PersonRef>,
+    /// Relations les plus fortes (amis, amours, rivaux ; le lien dans `note`).
+    pub relations: Vec<PersonRef>,
+    /// Traits de caractère les plus marqués (« curieuse », « bourru »…).
+    pub traits: Vec<String>,
+    /// Humeur (« joyeux », « triste », « fâchée »…).
+    pub mood: String,
+    /// Humeur de -1 à 1 (pour la couleur).
+    pub mood_value: f32,
+    /// Besoins, de 0 (manque) à 1 (comblé).
+    pub needs: Vec<NeedView>,
+    pub goals: Vec<GoalView>,
+    pub skill: Option<SkillView>,
+    /// Opinion moyenne du village (-100 à 100) et son libellé.
+    pub reputation: Option<f32>,
+    pub reputation_label: String,
+    /// Souvenirs, du plus marquant au plus faible.
+    pub memories: Vec<MemoryView>,
     pub master: Option<PersonRef>,
     /// Réserves et argent de son foyer.
     pub household: Option<HouseholdView>,
     pub events: Vec<EventView>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct NeedView {
+    pub label: String,
+    pub value: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct GoalView {
+    pub label: String,
+    pub reached: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct SkillView {
+    /// Métier (« boulangère »).
+    pub job: String,
+    pub value: f32,
+    /// « débutant », « compagnon », « maître »…
+    pub rank: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MemoryView {
+    pub text: String,
+    pub date: String,
+    /// Charge émotionnelle (-1 à 1).
+    pub weight: f32,
+    /// La personne concernée, s'il y en a une.
+    pub who: Option<u32>,
 }
 
 /// Une quantité d'un bien.
@@ -303,6 +353,14 @@ impl PersonSheet {
         } else {
             String::new()
         };
+        // Ce qu'il a en tête, s'il est en route pour voir quelqu'un.
+        if let Some(q) = p.brain.intent.target()
+            && p.alive()
+            && matches!(p.brain.act, hameaux_core::people::Act::Walking)
+            && let Some(q) = world.people.get(q as usize)
+        {
+            doing = format!("{} {}", p.brain.intent.label(), q.first);
+        }
         if let Some(with) = p.brain.with {
             if matches!(
                 p.brain.act,
@@ -384,18 +442,79 @@ impl PersonSheet {
             ));
         }
 
-        let mut friends: Vec<(u32, f32)> = p
-            .friends
+        // Les liens les plus forts, hors famille proche (déjà listée) : amitiés, amours, rivalités.
+        let kin: Vec<u32> = family.iter().map(|r| r.id).collect();
+        let mut rel: Vec<(u32, f32)> = p
+            .mind
+            .relations
             .iter()
-            .map(|(&k, &v)| (k, v))
-            .filter(|&(_, s)| s >= 5.0)
+            .filter(|&(k, _)| !kin.contains(k) && world.people[*k as usize].alive())
+            .map(|(&k, r)| (k, r.affection.max(r.rivalry * 1.5).max(r.attraction * 1.2)))
+            .filter(|&(_, s)| s >= 8.0)
             .collect();
-        friends.sort_by(|a, b| b.1.total_cmp(&a.1));
-        let friends = friends
+        rel.sort_by(|a, b| b.1.total_cmp(&a.1));
+        let relations = rel
             .into_iter()
-            .filter(|(f, _)| world.people[*f as usize].alive())
-            .take(5)
-            .map(|(f, s)| person_ref(world, f, lien_de(s)))
+            .take(7)
+            .map(|(f, _)| {
+                let q = &world.people[f as usize];
+                person_ref(world, f, p.mind.rel(f).label(q.female))
+            })
+            .collect();
+        let m = &p.mind;
+        let needs = NEED_LABELS
+            .iter()
+            .zip(m.needs.to_array())
+            .map(|(l, v)| NeedView {
+                label: (*l).into(),
+                value: v,
+            })
+            .collect();
+        let goals = m
+            .goals
+            .iter()
+            .map(|g| GoalView {
+                label: g.goal.label().into(),
+                reached: g.reached.is_some(),
+            })
+            .collect();
+        let skill = p.job.filter(|_| !p.child(tick)).map(|j| {
+            let v = m.skill(j);
+            let rank = hameaux_core::sim::LEVEL_LABELS[hameaux_core::sim::skill_level(v)];
+            SkillView {
+                job: j.label(p.female).into(),
+                value: v,
+                rank: feminine(rank, p.female),
+            }
+        });
+        let reputation = world.reputation(id);
+        let e = p.e();
+        let reputation_label = match reputation {
+            None => "inconnu".to_string() + e,
+            Some(r) if r >= 30.0 => format!("très estimé{e}"),
+            Some(r) if r >= 12.0 => format!("apprécié{e}"),
+            Some(r) if r >= 0.0 => format!("peu connu{e}"),
+            Some(_) => format!("mal vu{e}"),
+        };
+        let mut memories: Vec<&hameaux_core::mind::Memory> = m.memories.iter().collect();
+        memories.sort_by(|a, b| b.weight.abs().total_cmp(&a.weight.abs()));
+        let memories = memories
+            .into_iter()
+            .take(8)
+            .map(|mem| {
+                let who = mem
+                    .who
+                    .and_then(|w| world.people.get(w as usize))
+                    .map(|q| q.first.clone())
+                    .unwrap_or_default();
+                let c = Clock::at(mem.tick);
+                MemoryView {
+                    text: mem.text(&who, p.female),
+                    date: format!("An {}, {}", c.year, c.season.label().to_lowercase()),
+                    weight: mem.weight,
+                    who: mem.who,
+                }
+            })
             .collect();
 
         let events = world
@@ -425,7 +544,16 @@ impl PersonSheet {
             y: p.y,
             hidden: p.brain.hidden,
             family,
-            friends,
+            relations,
+            traits: m.traits.describe(p.female),
+            mood: feminine(m.mood_label(), p.female),
+            mood_value: m.mood.valence() + 0.5 * (m.needs.wellbeing() - 0.7),
+            needs,
+            goals,
+            skill,
+            reputation,
+            reputation_label,
+            memories,
             master: p
                 .master
                 .filter(|_| tick < p.apprentice_until)

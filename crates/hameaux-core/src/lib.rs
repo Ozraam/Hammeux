@@ -7,6 +7,7 @@ pub mod clock;
 pub mod economy;
 pub mod events;
 pub mod map;
+pub mod mind;
 pub mod names;
 pub mod path;
 pub mod people;

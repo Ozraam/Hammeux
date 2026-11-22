@@ -1,6 +1,10 @@
 //! API HTTP, WebSocket et fichiers du client web.
 
-use std::{path::Path, sync::Arc, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 
 use axum::{
     Json, Router,
@@ -33,9 +37,13 @@ pub struct AppState {
 
 pub fn router(state: AppState, web_dir: &Path) -> Router {
     let index = web_dir.join("index.html");
+    let page = index.clone();
     Router::new()
         .route("/health", get(health))
-        .route("/ws", get(ws))
+        .route(
+            "/ws",
+            get(move |s: State<AppState>, up: WebSocketUpgrade| ws(s, up, page.clone())),
+        )
         .route("/api/map", get(map_info))
         .route("/api/map/chunk/{cx}/{cy}", get(map_chunk))
         .route("/api/map/changes", get(map_changes))
@@ -47,6 +55,12 @@ pub fn router(state: AppState, web_dir: &Path) -> Router {
         .route("/api/admin/speed", post(speed))
         .route("/api/admin/save", post(save_now))
         .fallback_service(ServeDir::new(web_dir).not_found_service(ServeFile::new(index)))
+        // Tout est revalidé à chaque chargement : après une mise à jour, un simple
+        // rafraîchissement suffit (les gros fichiers ont un nom haché et un ETag).
+        .layer(tower_http::set_header::SetResponseHeaderLayer::if_not_present(
+            header::CACHE_CONTROL,
+            header::HeaderValue::from_static("no-cache"),
+        ))
         .layer(tower_http::compression::CompressionLayer::new())
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .with_state(state)
@@ -113,15 +127,27 @@ async fn save_now(State(s): State<AppState>) -> impl IntoResponse {
     }
 }
 
-async fn ws(State(s): State<AppState>, upgrade: WebSocketUpgrade) -> impl IntoResponse {
-    upgrade.on_upgrade(move |socket| stream(socket, s.snapshots))
+async fn ws(State(s): State<AppState>, upgrade: WebSocketUpgrade, page: PathBuf) -> impl IntoResponse {
+    upgrade.on_upgrade(move |socket| stream(socket, s.snapshots, page))
 }
 
-async fn stream(mut socket: WebSocket, snapshots: watch::Receiver<Arc<Snapshot>>) {
+/// Nom du script principal du client actuellement servi (`/assets/index-XXXX.js`), lu à
+/// chaque connexion : un onglet ouvert avant une mise à jour sait ainsi qu'il doit se recharger.
+async fn web_build(page: &Path) -> String {
+    let html = tokio::fs::read_to_string(page).await.unwrap_or_default();
+    html.split('"')
+        .find(|s| s.starts_with("/assets/") && s.ends_with(".js"))
+        .unwrap_or_default()
+        .to_string()
+}
+
+async fn stream(mut socket: WebSocket, snapshots: watch::Receiver<Arc<Snapshot>>, page: PathBuf) {
+    let web_build = web_build(&page).await;
     let hello = {
         let snap = snapshots.borrow().clone();
         ServerMsg::Hello {
             server_version: env!("CARGO_PKG_VERSION").into(),
+            web_build,
             seed: snap.world.seed,
             run: snap.run.clone(),
             clock: ClockView::of(&snap.world),

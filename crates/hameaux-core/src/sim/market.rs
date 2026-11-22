@@ -36,7 +36,7 @@ pub(crate) fn resource_at(m: &Map, t: usize, g: Good) -> bool {
 }
 
 impl World {
-    pub(crate) fn home_household(&self, i: usize) -> Option<&Household> {
+    pub fn home_household(&self, i: usize) -> Option<&Household> {
         self.economy.households.get(&self.people[i].home?)
     }
 
@@ -45,11 +45,14 @@ impl World {
         Some(self.economy.household(h))
     }
 
-    /// Rendement ×1,4 avec un outil (qui s'use un peu à chaque séance).
+    /// Rendement ×1,4 avec un outil, qui s'use un peu à chaque séance : un débutant l'abîme
+    /// plus vite qu'un maître, qui sait l'entretenir (usure de ×1,2 à ×0,6).
     pub(super) fn tool_bonus(&mut self, i: usize) -> f32 {
+        let skill = self.people[i].job.map_or(0.3, |j| self.people[i].mind.skill(j));
+        let wear = 0.025 * (1.3 - 0.75 * skill);
         match self.home_household_mut(i) {
             Some(h) if h.inv[Good::Tools as usize] >= 0.05 => {
-                h.inv[Good::Tools as usize] -= 0.025;
+                h.inv[Good::Tools as usize] -= wear;
                 1.4
             }
             _ => 1.0,
@@ -99,7 +102,7 @@ impl World {
         let Some(&kind) = self.economy.workshops.get(&wid) else {
             return;
         };
-        let bonus = self.tool_bonus(i);
+        let bonus = self.work_bonus(i);
         let Some(h) = self.home_household_mut(i) else {
             return;
         };
@@ -414,16 +417,23 @@ impl World {
         }
         self.villages[vi].stock.food = (self.villages[vi].stock.food + relief_got).min(MAX_FOOD);
 
-        // Paiement des vendeurs au prorata de leur offre, taxe au village.
+        // Paiement des vendeurs, taxe au village. Les acheteurs préfèrent le travail des
+        // meilleurs : quand tout ne se vend pas, ce qui vient d'un maître part d'abord, et à
+        // prix moyen égal, il se paie plus cher que celui d'un débutant (de ×0,8 à ×1,2).
         let mut revenue = [0.0f32; GOODS];
         for g in 0..GOODS {
             if supply[g] <= 0.0 {
                 continue;
             }
-            let sold_share = traded[g] / supply[g];
+            let worth: Vec<f32> = homes
+                .iter()
+                .map(|(_, members)| 0.8 + 0.4 * self.quality(members, Good::ALL[g]))
+                .collect();
+            let sold = share_by_quality(&sell, g, traded[g], &worth);
+            let paid: f32 = (0..n).map(|k| sold[k] * worth[k]).sum::<f32>().max(1e-6);
             for k in 0..n {
-                let units = sell[k][g] * sold_share;
-                let money = units * price[g];
+                let units = sold[k];
+                let money = traded[g] * price[g] * units * worth[k] / paid;
                 got[k][g] -= units;
                 let net = money * (1.0 - TAX);
                 // Remboursement de l'avance sur la moitié des ventes.
@@ -474,7 +484,41 @@ impl World {
             m.history.pop_front();
         }
     }
+}
 
+// ------------------------------------------------------------------ qualité
+
+/// Répartit `traded` unités vendues entre les vendeurs, en priorité selon la qualité
+/// (`worth`), sans dépasser ce que chacun a mis en vente.
+fn share_by_quality(sell: &[Inv], g: usize, traded: f32, worth: &[f32]) -> Vec<f32> {
+    let n = sell.len();
+    let mut sold = vec![0.0f32; n];
+    let mut left = traded;
+    // Quelques passes suffisent : chacune sert d'abord les mieux notés, au prorata.
+    for _ in 0..6 {
+        let weight: f32 = (0..n)
+            .filter(|&k| sell[k][g] - sold[k] > 1e-4)
+            .map(|k| (sell[k][g] - sold[k]) * worth[k] * worth[k])
+            .sum();
+        if left <= 1e-4 || weight <= 0.0 {
+            break;
+        }
+        let mut given = 0.0;
+        for k in 0..n {
+            let rest = sell[k][g] - sold[k];
+            if rest <= 1e-4 {
+                continue;
+            }
+            let a = (left * rest * worth[k] * worth[k] / weight).min(rest);
+            sold[k] += a;
+            given += a;
+        }
+        left -= given;
+    }
+    sold
+}
+
+impl World {
     // ------------------------------------------------------------------ repas
 
     /// Repas de midi : chaque foyer mange ses réserves (le meilleur d'abord), puis le grenier
@@ -497,6 +541,7 @@ impl World {
                     h.inv[gi] -= units;
                     need -= units * g.ration();
                 }
+                let cold = h.inv[Good::Wood as usize] < wood * 0.5;
                 h.inv[Good::Wood as usize] = (h.inv[Good::Wood as usize] - wood).max(0.0);
                 for g in Good::ALL {
                     h.inv[g as usize] *= 1.0 - g.spoil();
@@ -505,6 +550,17 @@ impl World {
                 let help = st.food.min(need);
                 st.food -= help;
                 need -= help;
+                // Plus rien au grenier : un ami peut partager ses provisions.
+                if need > 0.25 * full && self.neighbourly_help(vi, *hid, members, need) > 0.0 {
+                    let h = self.economy.household(*hid);
+                    for g in Good::FOODS {
+                        let gi = g as usize;
+                        let units = h.inv[gi].min(need / g.ration());
+                        h.inv[gi] -= units;
+                        need -= units * g.ration();
+                    }
+                }
+                self.fed(members, 1.0 - need / full.max(0.01), cold);
                 let h = self.economy.household(*hid);
                 if need > 0.25 * full {
                     h.hungry_days += 1;
@@ -529,6 +585,35 @@ impl World {
             }
             for hid in leaving {
                 self.famine_leave_house(vi, hid);
+            }
+        }
+    }
+
+    /// Après le repas : faim (et souvenir des jours de disette), froid l'hiver sans bois.
+    fn fed(&mut self, members: &[usize], share: f32, cold: bool) {
+        let winter = self.clock().season == Season::Winter;
+        for &m in members {
+            let mind = &mut self.people[m].mind;
+            mind.needs.food = share.clamp(0.0, 1.0);
+            if share < 0.75 {
+                mind.needs.safety = (mind.needs.safety - 0.2).max(0.0);
+                mind.mood.add(crate::mind::Emotion::Fear, 0.25);
+            }
+            mind.needs.warmth = if cold && winter {
+                (mind.needs.warmth - 0.35).max(0.0)
+            } else {
+                (mind.needs.warmth + 0.5).min(1.0)
+            };
+            if mind.needs.warmth < 0.3 {
+                mind.mood.add(crate::mind::Emotion::Sadness, 0.15);
+            }
+        }
+        if share < 0.75 {
+            let tick = self.tick;
+            for &m in members {
+                self.people[m]
+                    .mind
+                    .remember(tick, crate::mind::MemoryKind::Hunger, None, -0.5);
             }
         }
     }
@@ -565,7 +650,7 @@ impl World {
 
     /// Ce qu'un métier rapporterait par jour aux prix actuels du marché (production typique
     /// d'une journée, moins le coût des matières), mêlé au revenu réellement observé.
-    pub(crate) fn job_value(&self, vi: usize, job: Job) -> f32 {
+    pub fn job_value(&self, vi: usize, job: Job) -> f32 {
         let Some(m) = self.economy.markets.get(vi) else {
             return 1.0;
         };
@@ -780,5 +865,29 @@ impl World {
             let (vid, label) = (self.villages[vi].id, kind.a());
             self.event(Some(vid), vec![], format!("Nouveau chantier : {label}"));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::share_by_quality;
+    use crate::economy::GOODS;
+
+    /// Quand tout ne se vend pas, le maître vend d'abord ; personne ne vend plus qu'il n'a.
+    #[test]
+    fn masters_sell_first() {
+        let mut sell = vec![[0.0f32; GOODS]; 2];
+        sell[0][2] = 10.0; // débutant
+        sell[1][2] = 10.0; // maître
+        let worth = [0.84, 1.16];
+        let sold = share_by_quality(&sell, 2, 10.0, &worth);
+        assert!((sold[0] + sold[1] - 10.0).abs() < 1e-3);
+        assert!(sold[1] > sold[0] * 1.5, "{sold:?}");
+        // Tout se vend : chacun écoule tout, quelle que soit la qualité.
+        let sold = share_by_quality(&sell, 2, 20.0, &worth);
+        assert!(
+            (sold[0] - 10.0).abs() < 1e-3 && (sold[1] - 10.0).abs() < 1e-3,
+            "{sold:?}"
+        );
     }
 }

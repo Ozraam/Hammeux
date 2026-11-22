@@ -4,4 +4,9 @@ import type { RunState } from "./RunState";
 import type { Scene } from "./Scene";
 import type { VillageView } from "./VillageView";
 
-export type ServerMsg = { "type": "Hello", server_version: string, seed: number, run: RunState, clock: ClockView, map_rev: number, events_seq: number, } | { "type": "Tick", clock: ClockView, run: RunState, map_rev: number, events_seq: number, } | { "type": "Scene" } & Scene | { "type": "Villages", villages: Array<VillageView>, };
+export type ServerMsg = { "type": "Hello", server_version: string, 
+/**
+ * Script principal du client servi en ce moment (vide en développement avec Vite) ;
+ * s'il diffère de celui de l'onglet, l'onglet se recharge.
+ */
+web_build: string, seed: number, run: RunState, clock: ClockView, map_rev: number, events_seq: number, } | { "type": "Tick", clock: ClockView, run: RunState, map_rev: number, events_seq: number, } | { "type": "Scene" } & Scene | { "type": "Villages", villages: Array<VillageView>, };

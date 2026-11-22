@@ -97,6 +97,7 @@ const link = connect({
         return;
       case "Hello":
         seed = msg.seed;
+        reloadIfOutdated(msg.web_build);
         break;
     }
     clock = msg.clock;
@@ -377,3 +378,13 @@ start().catch((e) => {
   console.error(e);
   clockEl.textContent = `Erreur : ${e}`;
 });
+
+/**
+ * Le serveur sert une nouvelle version du client (mise à jour pendant que l'onglet était
+ * ouvert) : on recharge, sinon l'ancien code lirait des fiches qu'il ne comprend plus.
+ */
+function reloadIfOutdated(build: string) {
+  if (!build) return;
+  const mine = [...document.querySelectorAll<HTMLScriptElement>("script[type=module][src]")].map((s) => new URL(s.src).pathname);
+  if (mine.some((p) => p.startsWith("/assets/")) && !mine.includes(build)) location.reload();
+}

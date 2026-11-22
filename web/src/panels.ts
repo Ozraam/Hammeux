@@ -111,17 +111,25 @@ export class Panel {
       <h2>${esc(p.name)}</h2>
       <p class="sub">${esc(p.role)} · ${p.age} ans · <a data-village="${p.village}">${esc(p.village_name)}</a></p>
       ${p.alive ? `<p class="now">${p.hidden ? "Dort chez lui" + (p.female ? "le" : "") : esc(cap(p.doing))}</p>` : `<p class="now">${esc(cap(p.status))}</p>`}
+      ${p.alive ? `<p class="mood"><span class="dot" style="background:${moodColor(p.mood_value)}"></span>${esc(cap(p.mood))}</p>${p.traits.length ? `<p class="traits muted">${esc(cap(p.traits.join(", ")))}</p>` : ""}` : ""}
       ${actions}
       <dl>
         ${p.home ? `<dt>Maison</dt><dd>${esc(p.home)}</dd>` : ""}
         <dt>Naissance</dt><dd>${esc(p.born)}</dd>
         ${p.master ? `<dt>Apprenti${p.female ? "e" : ""} de</dt><dd>${link(p.master)}</dd>` : ""}
+        ${p.skill ? `<dt>Métier</dt><dd>${esc(p.skill.rank)} ${meter(p.skill.value)}</dd>` : ""}
+        ${p.alive ? `<dt>Réputation</dt><dd>${esc(p.reputation_label)}</dd>` : ""}
+        ${p.goals.length ? `<dt>Rêve${p.goals.length > 1 ? "s" : ""}</dt><dd>${p.goals.map((g) => (g.reached ? `<s class="muted">${esc(g.label)}</s> ✓` : esc(g.label))).join("<br>")}</dd>` : ""}
       </dl>
+      ${p.alive ? `<h3>Besoins</h3><div class="needs">${p.needs.map((n) => `<span>${esc(n.label)}</span>${meter(n.value)}`).join("")}</div>` : ""}
       ${p.household ? `<h3>Son foyer</h3>
         <p>${money(p.household.coins)} · ${Math.round(p.household.food_days)} jours de vivres${p.household.hungry ? ` · <b class="warn">a faim</b>` : ""}</p>
         <p class="muted">${p.household.goods.map((g) => `${qty(g.amount)} ${esc(g.label)}`).join(" · ") || "réserves vides"}</p>` : ""}
       <h3>Famille</h3>${list(p.family)}
-      <h3>Amis</h3>${list(p.friends)}
+      <h3>Relations</h3>${list(p.relations)}
+      ${p.memories.length ? `<h3>Souvenirs</h3><ul class="memories">${p.memories
+        .map((m) => `<li class="${m.weight >= 0 ? "good" : "bad"}">${m.who !== null ? `<a data-person="${m.who}">${esc(m.text)}</a>` : esc(m.text)} <span class="muted date">· ${esc(m.date)}</span></li>`)
+        .join("")}</ul>` : ""}
       <h3>Sa vie</h3>${this.eventsHtml(p.events, false)}
     `;
   }
@@ -221,6 +229,19 @@ function spark(values: number[]): string {
   const span = max - min || 1;
   const pts = values.map((v, i) => `${((i / (values.length - 1)) * w).toFixed(1)},${(h - 1 - ((v - min) / span) * (h - 2)).toFixed(1)}`);
   return `<svg class="spark" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><polyline points="${pts.join(" ")}" /></svg>`;
+}
+
+/** Petite jauge 0–1. */
+function meter(v: number): string {
+  const pct = Math.round(Math.max(0, Math.min(1, v)) * 100);
+  const cls = v < 0.3 ? "low" : v < 0.6 ? "mid" : "";
+  return `<span class="meter ${cls}" title="${pct} %"><i style="width:${pct}%"></i></span>`;
+}
+
+/** Couleur de l'humeur : rouge (au plus mal) → jaune → vert (radieux). */
+function moodColor(v: number): string {
+  const t = Math.max(0, Math.min(1, (v + 0.6) / 1.4));
+  return `hsl(${Math.round(t * 120)}, 65%, 55%)`;
 }
 
 function cap(s: string) {

@@ -7,20 +7,13 @@
 mod found;
 mod life;
 mod market;
+mod mind;
 mod tasks;
+
+pub use mind::{INTENT_LABELS, LEVEL_LABELS, MindStats, skill_level};
 
 pub(crate) use found::is_quarry;
 pub use life::de;
-
-/// Libellé d'une amitié selon son score (0–100).
-pub fn lien_de(score: f32) -> &'static str {
-    match score {
-        s if s >= 70.0 => "très proche",
-        s if s >= 40.0 => "proche",
-        s if s >= 15.0 => "ami",
-        _ => "connaissance",
-    }
-}
 
 use crate::{clock::Season, settlement::FieldState, tuning::*, world::World};
 
@@ -70,6 +63,7 @@ impl World {
                     self.update_incomes();
                     self.reconsider_jobs();
                     self.daily();
+                    self.daily_minds();
                 }
                 _ => {}
             }
@@ -78,6 +72,7 @@ impl World {
             for vi in 0..self.villages.len() {
                 self.planner(vi);
             }
+            self.minds_tick();
         }
         if self.tick.is_multiple_of(MINUTE) {
             self.social();
@@ -194,7 +189,8 @@ impl World {
         }
     }
 
-    /// Amitiés : ceux qui se croisent ou travaillent ensemble se rapprochent.
+    /// Amitiés : ceux qui se croisent ou travaillent ensemble se rapprochent (les sociables et
+    /// les gentils plus vite), et se sentent moins seuls.
     fn social(&mut self) {
         for v in 0..self.villages.len() {
             let id = self.villages[v].id;
@@ -212,10 +208,16 @@ impl World {
                         continue;
                     }
                     let (ii, jj) = (pi.id, pj.id);
-                    let fi = self.people[i].friends.entry(jj).or_insert(0.0);
-                    *fi = (*fi + 0.5).min(100.0);
-                    let fj = self.people[j].friends.entry(ii).or_insert(0.0);
-                    *fj = (*fj + 0.5).min(100.0);
+                    let (ti, tj) = (pi.mind.traits, pj.mind.traits);
+                    for (k, other, gain) in [
+                        (i, jj, 0.02 + 0.04 * ti.sociability + 0.03 * tj.kindness),
+                        (j, ii, 0.02 + 0.04 * tj.sociability + 0.03 * ti.kindness),
+                    ] {
+                        let m = &mut self.people[k].mind;
+                        let r = m.rel_mut(other);
+                        r.affection = (r.affection + gain * (1.0 - r.affection / 120.0)).min(100.0);
+                        m.needs.company = (m.needs.company + 0.001).min(1.0);
+                    }
                 }
             }
         }

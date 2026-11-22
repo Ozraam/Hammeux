@@ -369,12 +369,12 @@ impl World {
             partner: None,
             parents: parents.to_vec(),
             children: Vec::new(),
-            friends: Default::default(),
             master: None,
             apprentice_until: 0,
             x,
             y,
             looks,
+            mind: Default::default(),
             brain: Brain::default(),
         });
         for &p in parents {
@@ -383,9 +383,17 @@ impl World {
         if let Some(h) = home.and_then(|h| self.villages[vi].house_mut(h)) {
             h.residents.push(id);
         }
+        if parents.is_empty() {
+            self.people[id as usize].mind =
+                crate::mind::Mind::new(crate::mind::Traits::random(&mut self.rng));
+        } else {
+            self.born_mind(id as usize);
+        }
         if age >= ADULT_AGE {
             let job = self.pick_job(id);
             self.people[id as usize].job = Some(job);
+            self.seasoned_skills(id as usize);
+            self.pick_goals(id as usize);
         }
         id
     }
@@ -393,6 +401,7 @@ impl World {
     pub(crate) fn couple(&mut self, a: u32, b: u32) {
         self.people[a as usize].partner = Some(b);
         self.people[b as usize].partner = Some(a);
+        self.family_ties(a as usize);
     }
 
     /// Métier : celui qui rapporte le plus au village (revenus récents), souvent celui d'un
@@ -409,10 +418,29 @@ impl World {
         };
         self.economy.ensure_village(vi);
         let options = self.feasible_jobs(vi, Some(id));
+        // Un jeune préfère un métier où un maître du village peut le prendre en apprentissage.
+        let tick = self.tick;
+        let village = p.village;
+        let taught = |w: &World, j: Job| {
+            let pupils = |m: u32| {
+                w.alive()
+                    .filter(|q| q.master == Some(m) && tick < q.apprentice_until)
+                    .count()
+            };
+            w.alive().any(|q| {
+                q.village == village
+                    && q.job == Some(j)
+                    && !q.elder(tick)
+                    && q.mind.skill(j) >= crate::mind::MASTERY
+                    && pupils(q.id) < super::mind::APPRENTICES_PER_MASTER
+            })
+        };
+        let adult = p.age(tick) >= ADULT_AGE;
         let mut best = (f32::MIN, Job::Farmer);
         for j in options {
             let family = if parent_jobs.contains(&j) { 1.4 } else { 1.0 };
-            let score = self.job_value(vi, j) * family * (0.8 + 0.4 * self.rng.f32());
+            let master = if adult && taught(self, j) { 1.5 } else { 1.0 };
+            let score = self.job_value(vi, j) * family * master * (0.8 + 0.4 * self.rng.f32());
             if score > best.0 {
                 best = (score, j);
             }
