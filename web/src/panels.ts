@@ -13,7 +13,7 @@ export interface PanelActions {
   select(id: number | null): void;
 }
 
-const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
+export const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
 /**
  * Panneau latéral : fiche d'un habitant ou d'un village, rafraîchie toutes les 2 s.
@@ -70,7 +70,10 @@ export class Panel {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       if (this.current !== cur) return; // une autre fiche a été ouverte entre-temps
+      // Les sections dépliées le restent d'un rafraîchissement à l'autre.
+      const opened = [...this.el.querySelectorAll<HTMLDetailsElement>("details[open]")].map((d) => d.className);
       this.el.innerHTML = cur.kind === "person" ? this.personHtml(data) : this.villageHtml(data);
+      for (const d of this.el.querySelectorAll<HTMLDetailsElement>("details")) d.open = opened.includes(d.className);
       this.el.hidden = false;
     } catch (e) {
       this.el.innerHTML = `<button class="close" data-close>×</button><p>Fiche indisponible (${esc(String(e))}).</p>`;
@@ -106,6 +109,7 @@ export class Panel {
            <button data-follow="${p.id}" class="${following ? "on" : ""}">${following ? "Ne plus suivre" : "Suivre"}</button>
          </div>`
       : "";
+    const pages = `<p class="links-row"><a href="#/arbre/${p.id}">Arbre généalogique</a> · <a href="#/chronique?person=${p.id}">Sa chronique</a></p>`;
     return `
       <button class="close" data-close aria-label="Fermer">×</button>
       <h2>${esc(p.name)}</h2>
@@ -115,6 +119,7 @@ export class Panel {
       ${p.alive ? `<p class="mood"><span class="dot" style="background:${moodColor(p.mood_value)}"></span>${esc(cap(p.mood))}</p>${p.traits.length ? `<p class="traits muted">${esc(cap(p.traits.join(", ")))}</p>` : ""}` : ""}
       ${p.health ? `<p class="sick">${esc(cap(p.health))}</p>` : ""}
       ${actions}
+      ${pages}
       <dl>
         ${p.home ? `<dt>Maison</dt><dd>${esc(p.home)}</dd>` : ""}
         <dt>Naissance</dt><dd>${esc(p.born)}</dd>
@@ -124,6 +129,9 @@ export class Panel {
         ${p.convictions ? `<dt>Justice</dt><dd>condamné${p.female ? "e" : ""} ${p.convictions === 1 ? "une fois" : `${p.convictions} fois`}</dd>` : ""}
         ${p.goals.length ? `<dt>Rêve${p.goals.length > 1 ? "s" : ""}</dt><dd>${p.goals.map((g) => (g.reached ? `<s class="muted">${esc(g.label)}</s> ✓` : esc(g.label))).join("<br>")}</dd>` : ""}
       </dl>
+      ${p.personality.length ? `<details class="personality"><summary>Caractère</summary><div class="traits-grid">${p.personality
+        .map((t) => `<span class="lo${t.value < 0.38 ? " on" : ""}">${esc(t.low)}</span><span class="bipolar"><i style="left:${Math.round(t.value * 100)}%"></i></span><span class="hi${t.value > 0.62 ? " on" : ""}">${esc(t.high)}</span>`)
+        .join("")}</div></details>` : ""}
       ${p.alive ? `<h3>Besoins</h3><div class="needs">${p.needs.map((n) => `<span>${esc(n.label)}</span>${meter(n.value)}`).join("")}</div>` : ""}
       ${p.household ? `<h3>Son foyer</h3>
         <p>${money(p.household.coins)} · ${Math.round(p.household.food_days)} jours de vivres${p.household.hungry ? ` · <b class="warn">a faim</b>` : ""}</p>
@@ -144,6 +152,7 @@ export class Panel {
       <h2><span class="swatch" style="background:${css(v.color)}"></span>${esc(v.name)}</h2>
       <p class="sub">${esc(v.founded)}${v.founded_from ? ` par des familles de <a data-village="${v.founded_from.id}">${esc(v.founded_from.name)}</a>` : ""}</p>
       <div class="row"><button data-goto="${v.x + 1},${v.y + 1}">Aller au village</button></div>
+      <p class="links-row"><a href="#/village/${v.id}">Tableau de bord</a> · <a href="#/chronique?village=${v.id}">Chronique du village</a></p>
       <dl>
         <dt>Habitants</dt><dd>${v.population} (dont ${v.children} enfants, ${v.elders} aînés)</dd>
         <dt>Métiers</dt><dd>${jobs || "—"}</dd>
@@ -236,7 +245,7 @@ export class Chronicle {
   }
 }
 
-function money(c: number) {
+export function money(c: number) {
   return `${Math.round(c)} sou${Math.round(c) > 1 ? "s" : ""}`;
 }
 
@@ -267,6 +276,6 @@ function moodColor(v: number): string {
   return `hsl(${Math.round(t * 120)}, 65%, 55%)`;
 }
 
-function cap(s: string) {
+export function cap(s: string) {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }

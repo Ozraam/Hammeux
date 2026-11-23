@@ -4,7 +4,7 @@ Un monde de villages simulé en continu sur un serveur, consultable dans le navi
 
 ## Structure
 
-- `crates/hameaux-core` : moteur (monde, carte, habitants et leurs esprits, villages, économie, commerce, société, simulation, chronique, sauvegarde). Ni réseau ni disque.
+- `crates/hameaux-core` : moteur (monde, carte, habitants et leurs esprits, villages, économie, commerce, société, simulation, chronique et histoire, sauvegarde). Ni réseau ni disque.
 - `crates/hameaux-worldgen` : génération du monde (relief, rivières, milieux, ressources, villages).
 - `crates/hameaux-protocol` : messages serveur ↔ navigateur ; génère `web/src/protocol/*.ts` via `cargo test`.
 - `crates/hameaux-server` : boucle de simulation, API HTTP/WebSocket, sauvegardes.
@@ -25,7 +25,7 @@ Aperçu d'un monde sans lancer le serveur (statistiques + image) :
 
 ```bash
 cargo run --release -p hameaux-cli -- map --seed 42 --out carte.png
-cargo run --release -p hameaux-cli -- run --seed 42 --days 336   # 12 ans : population, greniers, humeurs, intentions, commerce, prix, société, événements
+cargo run --release -p hameaux-cli -- run --seed 42 --days 336   # 12 ans : population, greniers, humeurs, intentions, commerce, prix, société, histoire, événements
 ```
 
 ## Variables d'environnement
@@ -49,10 +49,17 @@ cargo run --release -p hameaux-cli -- run --seed 42 --days 336   # 12 ans : popu
 - `GET /api/map` : dimensions, libellés des milieux et ressources, villages (`MapInfo`).
 - `GET /api/map/changes?since=N` : tronçons modifiés depuis la révision N (routes, défrichement).
 - `GET /api/person/{id}`, `GET /api/village/{id}` : fiches.
-- `GET /api/events?since=&village=&limit=` : chronique.
+- `GET /api/events?since=&village=&limit=` : derniers événements (panneau de la chronique).
+- `GET /api/chronicle?before=&village=&person=&kind=&q=&annals=&limit=` : chronique complète, du plus récent au plus ancien, par pages (`EventPage`) ; `annals=true` cherche dans les annales (événements marquants, gardés bien plus longtemps).
+- `GET /api/village/{id}/history`, `GET /api/world/history` (`?all=true` : toute l'histoire, un relevé par semaine) : relevés quotidiens pour les tableaux de bord (`HistoryView`).
+- `GET /api/tree/{id}` : arbre généalogique (`FamilyTree`).
+- `GET /api/trade` : carte du commerce — trajets, routes, ventes des marchands entre villages, charrettes en route (`TradeMap`).
+- `GET /api/summary?since=TICK` : ce qui s'est passé depuis une date (`Summary`).
 - WebSocket : le client envoie `{"type":"View",x0,y0,x1,y1,detail}` ; le serveur répond par des `Scene` (ce qui est visible) et des `Villages`.
 - `GET /api/map/chunk/{cx}/{cy}` : tronçon 64×64 en binaire, 6 couches d'un octet par case (altitude, milieu, drapeaux, ressource, fertilité, ombrage), compressé en gzip.
 - `POST /api/admin/pause`, `/resume`, `/save` ; `POST /api/admin/speed` avec `{"speed": 600}`.
+
+Pages du site (fragment de l'adresse, à partager ou mettre en favori) : `#/monde`, `#/village/{id}`, `#/commerce`, `#/chronique?village=&kind=&person=&q=&annals=1`, `#/arbre/{id}`, `#/visite?since=TICK`.
 
 Pas d'authentification : le site n'est accessible que depuis le réseau local ou le VPN.
 

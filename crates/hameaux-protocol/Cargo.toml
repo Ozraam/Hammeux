@@ -7,3 +7,6 @@ edition = "2024"
 serde = { version = "1.0.229", features = ["derive"] }
 hameaux-core = { version = "0.1.0", path = "../hameaux-core" }
 ts-rs = "12.0.1"
+
+[dev-dependencies]
+hameaux-worldgen = { version = "0.1.0", path = "../hameaux-worldgen" }

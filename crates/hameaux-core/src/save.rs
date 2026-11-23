@@ -21,7 +21,8 @@ pub const MAGIC: &[u8; 4] = b"HAMX";
 /// 6 : + commerce (marchands, routes, nouvelles), ajouté à la fin ; tableaux par métier de
 /// longueur libre (un nouveau métier ne casse plus les sauvegardes).
 /// 7 : + société (chefs, justice, fêtes, maladies, savoirs), ajoutée à la fin.
-pub const SAVE_VERSION: u32 = 7;
+/// 8 : + histoire (relevés quotidiens des villages, flux du commerce, annales), à la fin.
+pub const SAVE_VERSION: u32 = 8;
 
 /// Métiers connus jusqu'à la version 5.
 const JOBS_V5: usize = 10;
@@ -230,7 +231,26 @@ impl PersonV5 {
     }
 }
 
-/// Monde de la phase 5 : celui d'aujourd'hui sans la société.
+/// Monde de la phase 6 : celui d'aujourd'hui sans l'histoire.
+#[derive(Deserialize)]
+#[cfg_attr(test, derive(serde::Serialize))]
+struct WorldV7 {
+    seed: u64,
+    tick: u64,
+    map: Map,
+    villages: Vec<crate::settlement::Village>,
+    people: Vec<crate::people::Person>,
+    chronicle: crate::events::Chronicle,
+    rng: crate::rng::Rng,
+    next_building: u32,
+    chunk_rev: Vec<u64>,
+    map_rev: u64,
+    economy: crate::economy::Economy,
+    trade: crate::trade::Trade,
+    society: crate::society::Society,
+}
+
+/// Monde de la phase 5 : sans la société.
 #[derive(Deserialize)]
 #[cfg_attr(test, derive(serde::Serialize))]
 struct WorldV6 {
@@ -367,6 +387,7 @@ pub fn decode(bytes: &[u8]) -> Result<Loaded, SaveError> {
                 economy: Default::default(),
                 trade: Default::default(),
                 society: Default::default(),
+                history: Default::default(),
                 caches: Default::default(),
             };
             w.ensure_caches();
@@ -374,6 +395,7 @@ pub fn decode(bytes: &[u8]) -> Result<Loaded, SaveError> {
             w.bootstrap_minds(friends);
             w.bootstrap_trade();
             w.bootstrap_society();
+            w.bootstrap_history();
             Ok(Loaded::Current(w))
         }
         4 => {
@@ -393,12 +415,14 @@ pub fn decode(bytes: &[u8]) -> Result<Loaded, SaveError> {
                 economy: v.economy.upgrade(),
                 trade: Default::default(),
                 society: Default::default(),
+                history: Default::default(),
                 caches: Default::default(),
             };
             w.ensure_caches();
             w.bootstrap_minds(friends);
             w.bootstrap_trade();
             w.bootstrap_society();
+            w.bootstrap_history();
             Ok(Loaded::Current(w))
         }
         5 => {
@@ -417,11 +441,13 @@ pub fn decode(bytes: &[u8]) -> Result<Loaded, SaveError> {
                 economy: v.economy.upgrade(),
                 trade: Default::default(),
                 society: Default::default(),
+                history: Default::default(),
                 caches: Default::default(),
             };
             w.ensure_caches();
             w.bootstrap_trade();
             w.bootstrap_society();
+            w.bootstrap_history();
             Ok(Loaded::Current(w))
         }
         6 => {
@@ -440,10 +466,35 @@ pub fn decode(bytes: &[u8]) -> Result<Loaded, SaveError> {
                 economy: v.economy,
                 trade: v.trade,
                 society: Default::default(),
+                history: Default::default(),
                 caches: Default::default(),
             };
             w.ensure_caches();
             w.bootstrap_society();
+            w.bootstrap_history();
+            Ok(Loaded::Current(w))
+        }
+        7 => {
+            let v: WorldV7 = postcard::from_bytes(&raw)?;
+            let mut w = World {
+                seed: v.seed,
+                tick: v.tick,
+                map: std::sync::Arc::new(v.map),
+                villages: v.villages,
+                people: v.people,
+                chronicle: v.chronicle,
+                rng: v.rng,
+                next_building: v.next_building,
+                chunk_rev: v.chunk_rev,
+                map_rev: v.map_rev,
+                economy: v.economy,
+                trade: v.trade,
+                society: v.society,
+                history: Default::default(),
+                caches: Default::default(),
+            };
+            w.ensure_caches();
+            w.bootstrap_history();
             Ok(Loaded::Current(w))
         }
         _ => {
@@ -638,6 +689,52 @@ pub(crate) mod tests {
             chunk_rev: w.chunk_rev.clone(),
             map_rev: w.map_rev,
             economy: economy_v5(&w.economy),
+        }
+    }
+
+    /// Une sauvegarde de la phase 6 est reprise : même société, un premier relevé de chaque
+    /// village tout de suite, et les événements marquants de la chronique dans les annales.
+    #[test]
+    fn reads_v7() {
+        let mut w = sample();
+        w.event(
+            Some(w.villages[0].id),
+            vec![],
+            "Fondation de Testville (9 habitants)".into(),
+        );
+        let v7 = WorldV7 {
+            seed: w.seed,
+            tick: w.tick,
+            map: (*w.map).clone(),
+            villages: w.villages.clone(),
+            people: w.people.clone(),
+            chronicle: w.chronicle.clone(),
+            rng: w.rng.clone(),
+            next_building: w.next_building,
+            chunk_rev: w.chunk_rev.clone(),
+            map_rev: w.map_rev,
+            economy: w.economy.clone(),
+            trade: w.trade.clone(),
+            society: w.society.clone(),
+        };
+        let raw = postcard::to_stdvec(&v7).unwrap();
+        let mut bytes = MAGIC.to_vec();
+        bytes.extend_from_slice(&7u32.to_le_bytes());
+        bytes.extend_from_slice(&zstd::encode_all(&raw[..], 3).unwrap());
+        match decode(&bytes).unwrap() {
+            Loaded::Current(back) => {
+                assert_eq!(back.society, w.society);
+                let id = back.villages[0].id;
+                assert_eq!(back.history.villages[&id].days.len(), 1);
+                assert!(
+                    back.history
+                        .annals
+                        .iter()
+                        .any(|e| e.text.starts_with("Fondation"))
+                );
+                assert_eq!(back.history.annals_seen, back.chronicle.next_seq);
+            }
+            other => panic!("{other:?}"),
         }
     }
 

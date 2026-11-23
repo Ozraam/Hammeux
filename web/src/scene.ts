@@ -7,6 +7,10 @@ const LERP_MS = 260;
 
 const ROOFS = [0xb5523b, 0x8e3b2f, 0x6b4c3b, 0x9c6b3e, 0x7a5a8a, 0x4f6d7a];
 const SHIRTS = [0xd94f3d, 0x3d6fd9, 0xe0b13a, 0x4caf6b, 0x8e5fc2, 0xe07b39, 0x2fa7a7, 0xf2f2f2];
+/** Teint (`looks[1]`) et cheveux (`looks[2]`). */
+const SKINS = [0xf3cfae, 0xdcaa80, 0xb87d52, 0x7d4f31];
+const HAIRS = [0x2b1d14, 0x5a3a22, 0x9a6230, 0xd9b26a, 0xa63d1f];
+const OUTLINE = 0x1e1a14;
 /** Couleur de ce qui est porté : index du bien + 1 (voir `Good`), 255 = baluchon. */
 /** Code `carry` d'une charrette de marchand. */
 const CART = 254;
@@ -33,6 +37,8 @@ interface Moving {
   fromX: number;
   fromY: number;
   t0: number;
+  /** Regarde vers la droite (1) ou la gauche (-1). */
+  face: number;
 }
 
 /**
@@ -66,7 +72,9 @@ export class SceneLayer {
       const p = prev ? this.position(prev, now) : { x: dot.x, y: dot.y };
       // Grand saut (arrivée, reprise) : pas d'animation.
       const jump = Math.hypot(p.x - dot.x, p.y - dot.y) > 6;
-      next.set(dot.id, { dot, fromX: jump ? dot.x : p.x, fromY: jump ? dot.y : p.y, t0: now });
+      const dx = dot.x - p.x;
+      const face = Math.abs(dx) > 0.01 ? Math.sign(dx) : (prev?.face ?? (dot.id % 2 ? 1 : -1));
+      next.set(dot.id, { dot, fromX: jump ? dot.x : p.x, fromY: jump ? dot.y : p.y, t0: now, face });
     }
     this.moving = next;
     for (const c of scene.civic) this.villageColor.set(c.village, c.color);
@@ -222,35 +230,98 @@ export class SceneLayer {
   draw(scale: number) {
     const g = this.people.clear();
     const now = performance.now();
-    const minPx = 2.6;
-    for (const m of this.moving.values()) {
-      const { dot } = m;
-      const p = this.position(m, now);
-      const r = Math.max(dot.stage === 0 ? 0.13 : 0.18, minPx / scale) * (dot.stage === 0 ? 0.8 : 1);
-      const shirt = SHIRTS[dot.looks[0] % SHIRTS.length];
-      if (dot.id === this.selected) {
-        g.circle(p.x, p.y, r * 2.2).fill({ color: 0xffe066, alpha: 0.35 }).stroke({ color: 0xffe066, width: r * 0.4 });
-      }
-      // Un malade a le teint verdâtre.
-      g.circle(p.x, p.y, r).fill(dot.sick ? mix(shirt, 0x9acd5a, 0.6) : shirt).stroke({ color: dot.sick ? 0x6f9a2f : 0x1e1a14, width: r * 0.35 });
-      if (dot.stage === 2) g.circle(p.x, p.y - r * 0.2, r * 0.45).fill(0xdddddd);
-      if (dot.carry === CART) {
-        // Charrette : caisse brune et deux roues.
-        g.rect(p.x - r * 2.6, p.y - r * 0.9, r * 1.8, r * 1.2).fill(0x8a5a2b).stroke({ color: 0x1e1a14, width: r * 0.2 });
-        g.circle(p.x - r * 2.3, p.y + r * 0.45, r * 0.4).fill(0x3a2a1a);
-        g.circle(p.x - r * 1.1, p.y + r * 0.45, r * 0.4).fill(0x3a2a1a);
-      } else if (dot.carry) {
-        g.rect(p.x + r * 0.6, p.y - r * 1.4, r * 1.1, r * 1.1).fill(CARRY[dot.carry] ?? 0x888888).stroke({ color: 0x1e1a14, width: r * 0.2 });
-      }
-      if (dot.act === ACT_CHATTING) {
-        g.roundRect(p.x - r * 0.3, p.y - r * 3.2, r * 1.9, r * 1.2, r * 0.3).fill({ color: 0xffffff, alpha: 0.9 });
-      } else if (dot.act === ACT_FEASTING) {
-        // Danse : petits confettis qui tournent au-dessus de la tête.
-        const a = now / 300 + dot.id;
-        for (let k = 0; k < 3; k++) {
-          const t = a + (k * 2 * Math.PI) / 3;
-          g.circle(p.x + Math.cos(t) * r * 1.4, p.y - r * 2 + Math.sin(t) * r * 0.5, r * 0.28).fill(FLAGS[(dot.id + k) % FLAGS.length]);
-        }
+    // Du plus haut au plus bas de l'écran : ceux de devant passent par-dessus.
+    const list = [...this.moving.values()].map((m) => ({ m, p: this.position(m, now) })).sort((a, b) => a.p.y - b.p.y);
+    for (const { m, p } of list) this.figure(g, m, p.x, p.y, scale, now);
+  }
+
+  /**
+   * Un habitant en silhouette : ombre au sol, jambes (qui bougent quand il marche), tunique
+   * ou robe de la couleur de son vêtement, tête et cheveux. Les pieds sont un peu sous sa
+   * position, pour que la silhouette se tienne sur sa case.
+   */
+  private figure(g: Graphics, m: Moving, x: number, y: number, scale: number, now: number) {
+    const { dot, face } = m;
+    const child = dot.stage === 0;
+    const elder = dot.stage === 2;
+    // Hauteur : une demi-case environ, jamais moins de quelques pixels à l'écran.
+    const h = Math.max(child ? 0.5 : 0.7, (child ? 9 : 12) / scale);
+    const u = h / 10;
+    const feet = y + h * 0.42;
+    const top = feet - h;
+    const walking = now - m.t0 < LERP_MS && Math.hypot(dot.x - m.fromX, dot.y - m.fromY) > 0.02;
+    const swing = walking ? Math.sin(now / 90 + dot.id) * 1.1 * u : 0;
+    const line = Math.max(0.3 * u, 0.7 / scale);
+    const shirt = SHIRTS[dot.looks[0] % SHIRTS.length];
+    const skin = dot.sick ? mix(SKINS[dot.looks[1] % SKINS.length], 0x9acd5a, 0.55) : SKINS[dot.looks[1] % SKINS.length];
+    const hair = elder ? 0xd8d8d2 : HAIRS[dot.looks[2] % HAIRS.length];
+
+    if (dot.id === this.selected) {
+      g.ellipse(x, feet, 4 * u, 1.6 * u).fill({ color: 0xffe066, alpha: 0.35 }).stroke({ color: 0xffe066, width: line * 1.5 });
+    }
+    g.ellipse(x, feet, 2.3 * u, 0.8 * u).fill({ color: 0x000000, alpha: 0.28 });
+
+    if (dot.carry === CART) {
+      // Charrette derrière lui : caisse brune et deux roues.
+      const cx = x - face * 3.6 * u;
+      g.rect(cx - 2.2 * u, feet - 4 * u, 4.4 * u, 2.6 * u).fill(0x8a5a2b).stroke({ color: OUTLINE, width: line });
+      g.moveTo(cx + face * 2.2 * u, feet - 3 * u).lineTo(x - face * 0.6 * u, feet - 4.2 * u).stroke({ color: 0x5a3a20, width: line });
+      g.circle(cx - 1.2 * u, feet - 1 * u, 1 * u).fill(0x3a2a1a);
+      g.circle(cx + 1.2 * u, feet - 1 * u, 1 * u).fill(0x3a2a1a);
+    }
+
+    // Jambes.
+    const hip = feet - 3.4 * u;
+    g.moveTo(x - 0.6 * u, hip).lineTo(x - 0.6 * u + swing, feet);
+    g.moveTo(x + 0.6 * u, hip).lineTo(x + 0.6 * u - swing, feet);
+    g.stroke({ color: 0x3a2a1a, width: 1.1 * u, cap: "round" });
+
+    // Cheveux longs (derrière la tête).
+    const headY = top + 1.8 * u;
+    if (dot.female && !child) g.roundRect(x - 1.8 * u, headY - 0.6 * u, 3.6 * u, 3.4 * u, 1.2 * u).fill(hair);
+
+    // Corps : robe pour les femmes, tunique et ceinture pour les hommes.
+    const shoulder = top + 3.4 * u;
+    if (dot.female) {
+      const hem = feet - (child ? 1.4 : 1.6) * u;
+      g.poly([x - 1.4 * u, shoulder, x + 1.4 * u, shoulder, x + 2.3 * u, hem, x - 2.3 * u, hem]).fill(shirt).stroke({ color: OUTLINE, width: line });
+    } else {
+      g.poly([x - 1.6 * u, shoulder, x + 1.6 * u, shoulder, x + 1.7 * u, hip + 0.6 * u, x - 1.7 * u, hip + 0.6 * u]).fill(shirt).stroke({ color: OUTLINE, width: line });
+      g.rect(x - 1.7 * u, hip - 0.4 * u, 3.4 * u, 0.6 * u).fill(0x4a3220);
+    }
+    // Bras qui balancent.
+    g.moveTo(x - 1.5 * u, shoulder + 0.4 * u).lineTo(x - 1.9 * u - swing * 0.6, shoulder + 3 * u);
+    g.moveTo(x + 1.5 * u, shoulder + 0.4 * u).lineTo(x + 1.9 * u + swing * 0.6, shoulder + 3 * u);
+    g.stroke({ color: mix(shirt, 0x000000, 0.25), width: 0.9 * u, cap: "round" });
+
+    // Tête : cheveux, puis le visage un peu plus bas (frange), un œil du côté où il regarde.
+    g.circle(x, headY - 0.2 * u, 1.75 * u).fill(hair);
+    g.circle(x, headY + 0.25 * u, 1.5 * u).fill(skin).stroke({ color: OUTLINE, width: line * 0.8 });
+    if (scale * u > 1.2) g.circle(x + face * 0.7 * u, headY + 0.2 * u, 0.28 * u).fill(OUTLINE);
+
+    // Canne des aînés.
+    if (elder) {
+      g.moveTo(x + face * 2.4 * u, shoulder + 2 * u).lineTo(x + face * 2.8 * u, feet).stroke({ color: 0x6b4a2a, width: 0.6 * u, cap: "round" });
+    }
+
+    // Ce qu'il porte, tenu devant lui.
+    if (dot.carry && dot.carry !== CART) {
+      const bx = x + face * 1.9 * u - 1.2 * u;
+      g.roundRect(bx, shoulder + 0.6 * u, 2.4 * u, 2.2 * u, 0.4 * u).fill(CARRY[dot.carry] ?? 0x888888).stroke({ color: OUTLINE, width: line * 0.8 });
+    }
+
+    if (dot.act === ACT_CHATTING) {
+      // Bulle de dialogue.
+      const bx = x + face * 1.6 * u, by = top - 3 * u;
+      g.roundRect(bx - 1.6 * u, by, 3.2 * u, 2.2 * u, 0.8 * u).fill({ color: 0xffffff, alpha: 0.92 });
+      g.poly([bx - face * 0.6 * u, by + 2.1 * u, bx - face * 1.4 * u, by + 3 * u, bx, by + 2.1 * u]).fill({ color: 0xffffff, alpha: 0.92 });
+      for (let k = -1; k <= 1; k++) g.circle(bx + k * 0.8 * u, by + 1.1 * u, 0.25 * u).fill(0x555555);
+    } else if (dot.act === ACT_FEASTING) {
+      // Danse : petits confettis qui tournent au-dessus de la tête.
+      const a = now / 300 + dot.id;
+      for (let k = 0; k < 3; k++) {
+        const t = a + (k * 2 * Math.PI) / 3;
+        g.circle(x + Math.cos(t) * 2.4 * u, top - 1.2 * u + Math.sin(t) * 0.8 * u, 0.5 * u).fill(FLAGS[(dot.id + k) % FLAGS.length]);
       }
     }
   }

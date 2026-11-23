@@ -19,6 +19,12 @@
         </select>
         <button id="fit" type="button">Toute la carte</button>
       </div>
+      <nav class="pages-nav">
+        <a href="#/monde">Tableaux de bord</a>
+        <a href="#/commerce">Commerce</a>
+        <a href="#/chronique">Chronique</a>
+        <a href="#/visite" id="visit-link">Depuis ta visite</a>
+      </nav>
       <details id="villages-panel" open>
         <summary>Villages</summary>
         <div id="villages"></div>
@@ -26,8 +32,10 @@
       <details id="chronicle-panel">
         <summary>Chronique</summary>
         <div id="chronicle"><p class="muted">Chargement…</p></div>
+        <p class="more-link"><a href="#/chronique">Toute la chronique →</a></p>
       </details>
     </div>
+    <section id="page" hidden></section>
     <aside id="panel" hidden></aside>
     <div id="tip" hidden></div>
     <script type="module" src="/src/main.ts"></script>

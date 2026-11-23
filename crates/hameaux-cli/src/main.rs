@@ -211,6 +211,7 @@ fn main() {
                 println!("  {:<20} {}", v.name, row.join(" "));
             }
             society(&world);
+            history(&world);
             println!("— événements par type —");
             let mut kinds: Vec<_> = tally.into_iter().collect();
             kinds.sort_by_key(|k| std::cmp::Reverse(k.1));
@@ -224,6 +225,35 @@ fn main() {
             }
         }
         _ => usage(),
+    }
+}
+
+/// Mémoire longue : relevés, annales, flux du commerce, poids dans la sauvegarde.
+fn history(world: &World) {
+    let h = &world.history;
+    let (days, weeks): (usize, usize) = h
+        .villages
+        .values()
+        .fold((0, 0), |a, v| (a.0 + v.days.len(), a.1 + v.weeks.len()));
+    let save = hameaux_core::save::encode(world).map_or(0, |b| b.len());
+    let mut empty = world.clone();
+    empty.history = Default::default();
+    let without = hameaux_core::save::encode(&empty).map_or(0, |b| b.len());
+    println!(
+        "— histoire — {days} relevés quotidiens et {weeks} hebdomadaires · {} événements dans les annales · {} flux de commerce · sauvegarde {} ko (dont histoire {} ko)",
+        h.annals.len(),
+        h.flows.len(),
+        save / 1024,
+        save.saturating_sub(without) / 1024
+    );
+    let mut kinds: std::collections::BTreeMap<hameaux_core::history::Kind, usize> = Default::default();
+    for e in &world.chronicle.events {
+        *kinds.entry(hameaux_core::history::Kind::of(&e.text)).or_default() += 1;
+    }
+    let row: Vec<String> = kinds.iter().map(|(k, n)| format!("{} {n}", k.label())).collect();
+    println!("  chronique par sorte : {}", row.join(" · "));
+    for e in h.annals.iter().rev().take(8) {
+        println!("  [{}] {}", Clock::at(e.tick), e.text);
     }
 }
 

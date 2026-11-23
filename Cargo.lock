@@ -414,6 +414,7 @@ name = "hameaux-protocol"
 version = "0.1.0"
 dependencies = [
  "hameaux-core",
+ "hameaux-worldgen",
  "serde",
  "ts-rs",
 ]

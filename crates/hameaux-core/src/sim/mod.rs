@@ -5,6 +5,7 @@
 //! amitiés chaque minute, pousse des champs, puis chaque habitant agit.
 
 mod found;
+mod history;
 mod life;
 mod market;
 mod mind;
@@ -69,6 +70,7 @@ impl World {
                     self.daily_minds();
                     self.daily_trade();
                     self.daily_society();
+                    self.record_history();
                 }
                 _ => {}
             }

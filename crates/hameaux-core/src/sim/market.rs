@@ -477,7 +477,7 @@ impl World {
                 // (Les recettes des marchands ne comptent pas comme revenu d'un métier d'ici.)
                 let tax = if fair { 0.0 } else { tax };
                 treasury += money * tax;
-                self.trader_sold(p, g, sold[k], money * (1.0 - tax));
+                self.trader_sold(p, vi, g, sold[k], money, money * (1.0 - tax));
             }
             for k in 0..n {
                 let units = sold[k];

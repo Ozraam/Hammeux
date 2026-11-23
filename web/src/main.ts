@@ -9,6 +9,7 @@ import type { MapInfo } from "./protocol/MapInfo";
 import type { RunState } from "./protocol/RunState";
 import type { Scene } from "./protocol/Scene";
 import type { VillageView } from "./protocol/VillageView";
+import { Pages } from "./pages";
 import { Chronicle, Panel } from "./panels";
 import { SceneLayer } from "./scene";
 import { TABLE_COLOR, buildTable } from "./table";
@@ -78,12 +79,42 @@ speedSel.onchange = () =>
     body: JSON.stringify({ speed: Number(speedSel.value) }),
   });
 
+// --- Dernière visite : tick où l'on regardait le monde la dernière fois (dans ce navigateur).
+const VISIT_KEY = "hameaux.visit";
+/** Six heures de jeu d'absence au moins pour qu'on résume ce qui s'est passé. */
+const WELCOME_AFTER = 6 * 360;
+let previousVisit: number | null = null;
+let visitRead = false;
+
+function readVisit() {
+  try {
+    const v = JSON.parse(localStorage.getItem(VISIT_KEY) ?? "null");
+    if (v && v.seed === seed && typeof v.tick === "number" && clock && v.tick <= clock.tick) previousVisit = v.tick;
+  } catch {
+    // Stockage indisponible (navigation privée…) : pas de résumé, tant pis.
+  }
+  visitRead = true;
+}
+
+function saveVisit() {
+  if (!clock || !visitRead) return;
+  try {
+    localStorage.setItem(VISIT_KEY, JSON.stringify({ seed, tick: clock.tick }));
+  } catch {
+    // idem
+  }
+}
+setInterval(saveVisit, 15000);
+window.addEventListener("pagehide", saveVisit);
+document.addEventListener("visibilitychange", () => document.visibilityState === "hidden" && saveVisit());
+
 /** Branchés une fois la carte prête (voir `start`). */
 const hooks: {
   scene?: (s: Scene) => void;
   mapRev?: (rev: number) => void;
   events?: (seq: number) => void;
   villages?: (v: VillageView[]) => void;
+  welcome?: () => void;
 } = {};
 
 const link = connect({
@@ -103,6 +134,10 @@ const link = connect({
     clock = msg.clock;
     run = msg.run;
     receivedAt = performance.now();
+    if (!visitRead) {
+      readVisit();
+      hooks.welcome?.();
+    }
     hooks.mapRev?.(msg.map_rev);
     hooks.events?.(msg.events_seq);
     renderHud();
@@ -145,11 +180,36 @@ async function start() {
 
   // Fiches (habitant, village) et chronique.
   let following: number | null = null;
+  let pages: Pages | null = null;
   const sheet = new Panel({
-    goTo: (x, y) => camera.flyTo(x, y, Math.max(camera.scale, 14)),
+    goTo: (x, y) => {
+      if (pages?.open) pages.close();
+      camera.flyTo(x, y, Math.max(camera.scale, 14));
+    },
     follow: (id) => (following = id),
     select: (id) => (scene.selected = id),
   });
+  pages = new Pages({
+    info,
+    openPerson: (id) => sheet.openPerson(id),
+    openVillage: (id) => sheet.openVillage(id),
+    goTo: (x, y) => camera.flyTo(x, y, Math.max(camera.scale, 14)),
+    overview: () => map.overview,
+    mapLoaded: () => map.loadedCount,
+    lastVisit: () => previousVisit,
+    now: () => clock?.tick ?? 0,
+  });
+  pages.show();
+  // De retour après une longue absence : ce qui s'est passé (sauf si l'on arrive sur une page).
+  let welcomed = false;
+  hooks.welcome = () => {
+    if (welcomed || !visitRead || !clock) return;
+    welcomed = true;
+    if (previousVisit !== null && clock.tick - previousVisit >= WELCOME_AFTER && !pages?.open) {
+      pages?.go(`#/visite?since=${previousVisit}`);
+    }
+  };
+  hooks.welcome();
   const chronicle = new Chronicle(sheet);
   hooks.events = (seq) => chronicle.update(seq);
   hooks.scene = (s) => scene.update(s);
@@ -234,7 +294,10 @@ async function start() {
     for (const v of list) {
       const b = villageButtons.get(v.id);
       if (b) b.innerHTML = villageLabel(v);
-      else addVillage(v);
+      else {
+        addVillage(v);
+        if (!info.villages.some((w) => w.id === v.id)) info.villages.push(v);
+      }
     }
   };
   $("fit").onclick = () => {

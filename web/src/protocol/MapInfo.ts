@@ -13,4 +13,12 @@ chunk_size: number, chunks_x: number, chunks_y: number, sea_level: number,
 /**
  * Ordre des couches dans un tronçon (voir [`encode_chunk`]).
  */
-chunk_layers: Array<string>, biomes: Array<Labeled>, resources: Array<Labeled>, villages: Array<VillageView>, };
+chunk_layers: Array<string>, biomes: Array<Labeled>, resources: Array<Labeled>, villages: Array<VillageView>, 
+/**
+ * Sortes d'événements de la chronique (filtres).
+ */
+event_kinds: Array<Labeled>, 
+/**
+ * Biens (index des tableaux par bien : prix, stocks…).
+ */
+goods: Array<Labeled>, };
