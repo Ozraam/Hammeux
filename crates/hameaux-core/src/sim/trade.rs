@@ -1080,11 +1080,9 @@ mod tests {
     /// Une grande prairie avec deux villages à 120 cases l'un de l'autre.
     fn two_villages() -> World {
         let mut map = Map::new(300, 200);
-        for i in 0..map.len() {
-            map.biome[i] = Biome::Meadow as u8;
-            map.elevation[i] = 100;
-            map.fertility[i] = 200;
-        }
+        map.biome.fill(Biome::Meadow as u8);
+        map.elevation.fill(100);
+        map.fertility.fill(200);
         let site = |name: &str, x| Site {
             name: name.into(),
             x,

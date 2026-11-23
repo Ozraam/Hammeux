@@ -133,9 +133,7 @@ mod tests {
     fn walks_around_water() {
         // 10 × 5, mur d'eau en x = 5 sauf en y = 4.
         let mut m = Map::new(10, 5);
-        for i in 0..m.len() {
-            m.biome[i] = Biome::Meadow as u8;
-        }
+        m.biome.fill(Biome::Meadow as u8);
         for y in 0..4 {
             let i = m.idx(5, y);
             m.biome[i] = Biome::Lake as u8;

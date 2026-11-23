@@ -462,11 +462,9 @@ pub(crate) mod tests {
     /// Petit monde de prairie avec un village, avancé de 1 000 ticks.
     pub fn sample() -> World {
         let mut map = Map::new(80, 80);
-        for i in 0..map.len() {
-            map.biome[i] = Biome::Meadow as u8;
-            map.elevation[i] = 100;
-            map.fertility[i] = 200;
-        }
+        map.biome.fill(Biome::Meadow as u8);
+        map.elevation.fill(100);
+        map.fertility.fill(200);
         let site = Site {
             name: "Clairval".into(),
             x: 40,
