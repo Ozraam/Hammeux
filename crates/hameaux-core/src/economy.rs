@@ -256,10 +256,10 @@ pub struct Economy {
     pub treasury: Vec<f32>,
     /// Ateliers, par identifiant de bâtiment (le bâtiment est une `House` sans habitants).
     pub workshops: BTreeMap<u32, Workshop>,
-    /// Revenu moyen par travailleur et par jour, par village et par métier.
-    pub income: Vec<[f32; JOBS]>,
+    /// Revenu moyen par travailleur et par jour, par village et par métier (`Job as usize`).
+    pub income: Vec<Vec<f32>>,
     /// Gains du jour en cours, par village et par métier.
-    pub today: Vec<[f32; JOBS]>,
+    pub today: Vec<Vec<f32>>,
     /// Ressources à portée de chaque village.
     pub access: Vec<[bool; GOODS]>,
     /// Dernier changement de métier de chaque habitant (tick) : on garde un métier au moins un an.
@@ -279,6 +279,7 @@ pub fn default_income(job: Job) -> f32 {
         Job::Fisher => 1.8,
         Job::Hunter => 1.8,
         Job::Miner => 1.6,
+        Job::Merchant => 2.5,
     }
 }
 
@@ -296,14 +297,19 @@ impl Economy {
             self.treasury.push(100.0);
         }
         while self.income.len() <= vi {
-            let mut row = [0.0; JOBS];
-            for j in Job::ALL {
-                row[j as usize] = default_income(j);
-            }
-            self.income.push(row);
+            self.income.push(Vec::new());
         }
         while self.today.len() <= vi {
-            self.today.push([0.0; JOBS]);
+            self.today.push(Vec::new());
+        }
+        // Un métier nouveau (sauvegarde plus ancienne) commence au revenu supposé.
+        for row in self.income.iter_mut() {
+            while row.len() < JOBS {
+                row.push(default_income(Job::ALL[row.len()]));
+            }
+        }
+        for row in self.today.iter_mut() {
+            row.resize(JOBS.max(row.len()), 0.0);
         }
     }
 

@@ -4,8 +4,9 @@ use crate::{
     clock::Season,
     economy::{Good, Workshop},
     map::{Biome, Resource as MapResource},
-    people::{Act, Carry, Job, Status, Step},
+    people::{Act, Carry, Intent, Job, Status, Step},
     settlement::{FieldState, HouseState},
+    society::Tech,
     tuning::*,
     world::{Caches, World, occ},
 };
@@ -34,6 +35,9 @@ impl World {
                 return;
             }
         }
+        if !self.plan_still_valid(i) {
+            self.abandon(i);
+        }
         if self.people[i].brain.plan.is_empty() {
             self.assign(i);
         }
@@ -46,7 +50,10 @@ impl World {
         let tick = self.tick;
         let width = self.map.width;
         let p = &mut self.people[i];
+        // Les charrettes vont plus vite sur les routes.
+        let road = p.brain.traveling && self.map.road_at(p.tile(width) as usize);
         let mut budget = WALK
+            * if road { 1.4 } else { 1.0 }
             * if p.child(tick) {
                 0.85
             } else if p.elder(tick) {
@@ -162,23 +169,23 @@ impl World {
                     Good::Wood => LOAD_WOOD as f32,
                     Good::Stone => LOAD_STONE as f32,
                     Good::Fish => {
-                        if self.map.resource[tile as usize] == MapResource::Fish as u8 {
+                        (if self.map.resource[tile as usize] == MapResource::Fish as u8 {
                             1.4
                         } else {
                             0.7
-                        }
+                        }) * self.tech_bonus(i, Tech::Nets, 1.4)
                     }
                     Good::Meat => {
-                        if self.map.resource[tile as usize] == MapResource::Game as u8 {
+                        (if self.map.resource[tile as usize] == MapResource::Game as u8 {
                             1.1
                         } else {
                             0.5
-                        }
+                        }) * self.tech_bonus(i, Tech::Snares, 1.3)
                     }
                     Good::Ore => 1.5,
                     _ => 1.0,
                 };
-                let amount = base * self.tool_bonus(i);
+                let amount = base * self.work_bonus(i);
                 let b = &mut self.people[i].brain;
                 b.carry = Some(Carry::Good(good));
                 b.carry_amount = amount;
@@ -191,6 +198,16 @@ impl World {
                 }
             }
             Step::Craft(wid) => self.craft(i, wid),
+            Step::Talk(j) => self.talk(i, j as usize),
+            Step::Mingle => self.mingle(i),
+            Step::HideHere => {
+                let b = &mut self.people[i].brain;
+                b.hidden = true;
+                b.carry = None;
+                b.act = Act::Sleeping;
+            }
+            Step::Journey { to, back } => self.journey(i, to, back),
+            Step::Arrive => self.trade_arrive(i),
             Step::Hide => {
                 if let Some((x, y)) = self.home_tile(i) {
                     let p = &mut self.people[i];
@@ -244,7 +261,7 @@ impl World {
                     f.work = 0.0;
                     f.growth = 0.0;
                 }
-                let amount = amount * self.tool_bonus(i);
+                let amount = amount * self.work_bonus(i) * self.tech_bonus(i, Tech::Rotation, 1.25);
                 let b = &mut self.people[i].brain;
                 b.carry = Some(Carry::Good(Good::Grain));
                 b.carry_amount = amount;
@@ -270,33 +287,433 @@ impl World {
     fn assign(&mut self, i: usize) {
         let tick = self.tick;
         if self.people[i].brain.leaving {
+            self.people[i].brain.intent = Intent::Leave;
             self.plan(i, [Step::Leave]);
+            return;
+        }
+        if self.trader_assign(i) {
             return;
         }
         let part = day_part(self.clock().hour);
         let home = self.home_tile(i).map(|(x, y)| self.map.idx(x, y) as u32);
+        let id = self.people[i].id;
+        // Malade : on reste couché chez soi (la nuit, on dort comme tout le monde).
+        if part != DayPart::Night && self.society.sick.contains_key(&id) {
+            self.people[i].brain.intent = Intent::Rest;
+            self.near_home(i, HOUR, Act::Ill);
+            return;
+        }
+        let feast = self.festive(self.people[i].village) && (9..=21).contains(&self.clock().hour);
         match part {
-            DayPart::Night => match home {
-                Some(h) => self.plan(i, [Step::Go(h), Step::Hide]),
-                None => self.plan(i, [Self::wait(30 * MINUTE, Act::Idle)]),
-            },
-            DayPart::Morning => self.near_home(i, 20 * MINUTE, Act::Idle),
-            DayPart::Evening => self.leisure(i, true),
-            DayPart::Work => {
-                let p = &self.people[i];
-                if p.child(tick) {
-                    self.play(i);
-                } else if p.elder(tick) || rest_day(tick) {
-                    self.leisure(i, false);
-                } else {
-                    self.work(i);
+            DayPart::Night => {
+                self.people[i].brain.intent = Intent::Sleep;
+                match home {
+                    Some(h) => self.plan(i, [Step::Go(h), Step::Hide]),
+                    None => self.plan(i, [Self::wait(30 * MINUTE, Act::Idle)]),
                 }
+            }
+            DayPart::Morning => {
+                self.people[i].brain.intent = Intent::Rest;
+                self.near_home(i, 20 * MINUTE, Act::Idle);
+            }
+            DayPart::Evening | DayPart::Work if self.people[i].child(tick) => {
+                self.people[i].brain.intent = Intent::Play;
+                if feast && self.rng.chance(0.7) {
+                    let (x, y) = self.villages[self.village_of(i)].well;
+                    let spot = self.spot_near(x, y, 4);
+                    self.plan(i, [Step::Go(spot), Self::wait(30 * MINUTE, Act::Playing)]);
+                } else {
+                    self.play(i);
+                }
+            }
+            DayPart::Evening | DayPart::Work => {
+                let intent = self.decide(i, part == DayPart::Work);
+                self.carry_out(i, intent);
             }
         }
     }
 
+    // ------------------------------------------------------------------ intentions (utilité)
+
+    /// Note chaque chose que l'habitant pourrait faire selon ses besoins, sa personnalité,
+    /// son humeur, l'heure, ses relations et ses objectifs ; garde la meilleure (avec un peu
+    /// de hasard).
+    fn decide(&mut self, i: usize, work_time: bool) -> Intent {
+        let tick = self.tick;
+        let vi = self.village_of(i);
+        let p = &self.people[i];
+        let (n, t, mood) = (p.mind.needs, p.mind.traits, p.mind.mood);
+        let elder = p.elder(tick);
+        let evening = if work_time { 0.0 } else { 1.0 };
+        let mut options: Vec<(f32, Intent)> = Vec::with_capacity(6);
+
+        // Travailler.
+        if work_time
+            && !elder
+            && let Some(job) = p.job
+        {
+            let hh = self.home_household(i);
+            let poverty = hh.map_or(0.3, |h| {
+                (if h.coins < 5.0 { 0.25 } else { 0.0 }) + (if h.rations() < 21.0 { 0.25 } else { 0.0 })
+            });
+            let goal =
+                if p.mind.has_goal(crate::mind::Goal::Master) || p.mind.has_goal(crate::mind::Goal::Wealth) {
+                    0.15
+                } else {
+                    0.0
+                };
+            let mut w = 0.85 + 0.3 * t.rigor + 0.2 * t.ambition + poverty + goal
+                - 1.5 * (0.4 - n.sleep).max(0.0)
+                - 0.3 * mood.sadness;
+            if rest_day(tick) {
+                // Le septième jour, seuls les pressés d'argent travaillent.
+                w = if poverty > 0.2 || p.mind.has_goal(crate::mind::Goal::Wealth) {
+                    w * 0.45
+                } else {
+                    0.0
+                };
+            }
+            // Son métier ne rapporte presque rien et le foyer a de quoi voir venir.
+            if job != Job::Builder
+                && self.job_value(vi, job) < 0.6
+                && hh.is_some_and(|h| h.coins > 10.0 && h.rations() > 14.0 * 3.0)
+            {
+                w *= 0.35;
+            }
+            let learning = (tick < p.apprentice_until)
+                .then_some(p.master)
+                .flatten()
+                .filter(|&m| self.available(m as usize));
+            options.push((w, learning.map_or(Intent::Work, Intent::Learn)));
+        }
+
+        // La fête du village (ou le premier jour de sa foire) : presque tout le monde y va.
+        if self.festive(p.village) && (9..=21).contains(&self.clock().hour) {
+            options.push((
+                1.3 + 0.4 * t.sociability + 0.2 * t.openness + 0.3 * mood.joy,
+                Intent::Feast,
+            ));
+        }
+
+        // Discuter avec un ami.
+        if let Some(f) = self.pick_friend(i) {
+            let c = (1.0 - n.company) * (0.5 + 0.9 * t.sociability) + 0.15 * mood.joy + 0.3 * evening + 0.05;
+            options.push((c, Intent::Chat(f)));
+        }
+
+        // Faire la cour.
+        if self.single(i)
+            && let Some((q, attraction)) = self.pick_crush(i)
+        {
+            let p = &self.people[i];
+            let goal = if p.mind.has_goal(crate::mind::Goal::Marry) {
+                0.25
+            } else {
+                0.0
+            };
+            let c = 0.1 + attraction / 100.0 * 0.9 + goal + 0.2 * (1.0 - n.company) + 0.25 * evening;
+            options.push((c, Intent::Court(q)));
+        }
+
+        // Rendre visite à la famille qui vit ailleurs.
+        if let Some(q) = self.pick_relative(i) {
+            let v = (1.0 - n.meaning) * 0.8 + 0.25 * t.attachment + 0.2 * evening;
+            options.push((v, Intent::Visit(q)));
+        }
+
+        // Se promener, se reposer.
+        let free = if elder || rest_day(tick) { 0.2 } else { 0.0 };
+        options.push((
+            (1.0 - n.leisure) * (0.45 + 0.6 * t.openness) + 0.05 + free,
+            Intent::Stroll,
+        ));
+        let rest = 0.1 + (1.0 - n.sleep) * 0.7 + if elder { 0.3 } else { 0.0 } + 0.3 * evening;
+        options.push((rest, Intent::Rest));
+
+        let mut best = (f32::MIN, Intent::Rest);
+        for (score, intent) in options {
+            let s = score + self.rng.f32() * (0.15 + 0.15 * t.openness);
+            if s > best.0 {
+                best = (s, intent);
+            }
+        }
+        best.1
+    }
+
+    /// Découpe une intention en étapes (le plan). Si elle n'est pas réalisable, on se rabat
+    /// sur une promenade ou du repos.
+    fn carry_out(&mut self, i: usize, intent: Intent) {
+        self.people[i].brain.intent = intent;
+        let done = match intent {
+            Intent::Work => self.work(i),
+            Intent::Learn(m) => self.learn(i, m),
+            Intent::Chat(f) | Intent::Court(f) => self.meet(i, f, true),
+            Intent::Visit(q) => self.meet(i, q, false),
+            Intent::Stroll => {
+                self.stroll(i);
+                true
+            }
+            Intent::Feast => {
+                let (x, y) = self.villages[self.village_of(i)].well;
+                let spot = self.spot_near(x, y, 4);
+                let ticks = 40 * MINUTE + self.rng.below(20 * MINUTE);
+                self.plan(
+                    i,
+                    [Step::Go(spot), Self::wait(ticks, Act::Feasting), Step::Mingle],
+                );
+                true
+            }
+            _ => false,
+        };
+        if !done {
+            self.people[i].brain.intent = Intent::Rest;
+            self.near_home(i, 30 * MINUTE, Act::Idle);
+        }
+    }
+
+    /// Quelqu'un qu'on peut aller voir maintenant (dehors, au village, pas en partance).
+    fn available(&self, q: usize) -> bool {
+        let p = &self.people[q];
+        p.alive() && !p.brain.hidden && !p.brain.leaving && !p.brain.traveling && !self.away(q)
+    }
+
+    /// Un ami (affection d'au moins 15, pas un rival) disponible, tiré au sort selon l'affection.
+    fn pick_friend(&mut self, i: usize) -> Option<u32> {
+        let tick = self.tick;
+        let village = self.people[i].village;
+        let friends: Vec<(u32, f32)> = self.people[i]
+            .mind
+            .relations
+            .iter()
+            .filter(|(_, r)| r.affection >= 15.0 && r.rivalry < r.affection)
+            .map(|(&id, r)| (id, r.affection))
+            .filter(|&(f, _)| {
+                let q = &self.people[f as usize];
+                self.available(f as usize) && !q.child(tick) && q.village == village
+            })
+            .collect();
+        let total: f32 = friends.iter().map(|f| f.1).sum();
+        let mut roll = self.rng.f32() * total;
+        for (f, a) in friends {
+            roll -= a;
+            if roll <= 0.0 {
+                return Some(f);
+            }
+        }
+        None
+    }
+
+    /// Celui ou celle qui plaît le plus (et qui est libre), ou, pour qui cherche l'amour,
+    /// un célibataire qu'on connaît un peu.
+    fn pick_crush(&mut self, i: usize) -> Option<(u32, f32)> {
+        let best = self.people[i]
+            .mind
+            .relations
+            .iter()
+            .filter(|(_, r)| r.attraction >= 12.0)
+            .filter(|&(&q, _)| self.available(q as usize) && self.could_pair(i, q as usize))
+            .max_by(|a, b| a.1.attraction.total_cmp(&b.1.attraction))
+            .map(|(&q, r)| (q, r.attraction));
+        if best.is_some() || !self.people[i].mind.has_goal(crate::mind::Goal::Marry) {
+            return best;
+        }
+        let female = self.people[i].female;
+        let options: Vec<u32> = self.people[i]
+            .mind
+            .relations
+            .iter()
+            .filter(|(_, r)| r.affection >= 5.0 && r.rivalry < 20.0)
+            .map(|(&q, _)| q)
+            .filter(|&q| {
+                self.available(q as usize)
+                    && self.could_pair(i, q as usize)
+                    && self.people[q as usize].female != female
+            })
+            .collect();
+        self.rng.pick(&options).map(|&q| (q, 0.0))
+    }
+
+    /// Un parent, un enfant, un frère ou une sœur qui vit sous un autre toit.
+    fn pick_relative(&mut self, i: usize) -> Option<u32> {
+        let tick = self.tick;
+        let (home, village) = (self.people[i].home, self.people[i].village);
+        let family: Vec<u32> = self
+            .family_of(i)
+            .into_iter()
+            .filter(|&q| {
+                let p = &self.people[q as usize];
+                self.available(q as usize) && p.village == village && p.home != home && !p.child(tick)
+            })
+            .collect();
+        self.rng.pick(&family).copied()
+    }
+
+    /// L'apprenti suit son maître et l'imite.
+    fn learn(&mut self, i: usize, m: u32) -> bool {
+        let q = &self.people[m as usize];
+        if !self.available(m as usize) {
+            return false;
+        }
+        let (t, act) = (q.tile(self.map.width), q.brain.act);
+        let act = if act == Act::Idle || act == Act::Walking {
+            Act::Learning
+        } else {
+            act
+        };
+        // L'apprenti progresse vite tant que le maître en sait plus que lui.
+        if let Some(job) = self.people[i].job {
+            let gap = (q.mind.skill(job) - self.people[i].mind.skill(job)).max(0.0);
+            self.improve(i, job, 0.06 * gap);
+        }
+        self.plan(
+            i,
+            [
+                Step::Go(t),
+                Step::Wait {
+                    ticks: HOUR,
+                    act,
+                    with: Some(m),
+                },
+            ],
+        );
+        true
+    }
+
+    fn stroll(&mut self, i: usize) {
+        let v = &self.villages[self.village_of(i)];
+        let (x, y) = (v.x, v.y);
+        let spot = self.spot_near(x, y, 10);
+        self.plan(i, [Step::Go(spot), Self::wait(40 * MINUTE, Act::Strolling)]);
+    }
+
+    /// Va retrouver quelqu'un (au puits, ou là où il se trouve pour une visite), qui
+    /// interrompt ce qu'il fait s'il le peut ; la conversation a lieu à la fin.
+    fn meet(&mut self, i: usize, f: u32, at_well: bool) -> bool {
+        if !self.available(f as usize) {
+            return false;
+        }
+        let me = self.people[i].id;
+        let (cx, cy) = if at_well {
+            self.villages[self.village_of(i)].well
+        } else {
+            let q = &self.people[f as usize];
+            (q.x as u32, q.y as u32)
+        };
+        let a = self.spot_near(cx, cy, 1);
+        let b = self.spot_near(cx, cy, 1);
+        let ticks = if at_well { CHAT } else { 2 * CHAT };
+        self.plan(
+            i,
+            [
+                Step::Go(a),
+                Step::Wait {
+                    ticks,
+                    act: Act::Chatting,
+                    with: Some(f),
+                },
+                Step::Talk(f),
+            ],
+        );
+        let fi = f as usize;
+        let busy = self
+            .trade
+            .traders
+            .get(&f)
+            .is_some_and(|t| t.leg != crate::trade::Leg::Idle);
+        let fb = &mut self.people[fi].brain;
+        if fb.carry.is_none() && fb.wait == 0 && !busy {
+            fb.plan.clear();
+            fb.path.clear();
+            fb.path_pos = 0;
+            fb.intent = Intent::Chat(me);
+            fb.plan.extend([
+                Step::Go(b),
+                Step::Wait {
+                    ticks: ticks + 6,
+                    act: Act::Chatting,
+                    with: Some(me),
+                },
+            ]);
+        }
+        true
+    }
+
+    /// Temps libre (repli quand rien d'autre n'est possible) : un ami, une promenade, ou
+    /// devant chez soi.
+    fn leisure(&mut self, i: usize) {
+        if let Some(f) = self.pick_friend(i)
+            && self.rng.chance(0.3)
+            && self.meet(i, f, true)
+        {
+            self.people[i].brain.intent = Intent::Chat(f);
+            return;
+        }
+        if self.rng.chance(0.5) {
+            self.people[i].brain.intent = Intent::Stroll;
+            self.stroll(i);
+            return;
+        }
+        self.people[i].brain.intent = Intent::Rest;
+        self.near_home(i, 30 * MINUTE, Act::Idle);
+    }
+
+    // ------------------------------------------------------------------ plans (HTN)
+
+    /// Le plan tient-il toujours ? (la personne visée est partie, le champ a été moissonné
+    /// par un autre, le chantier est fini, l'atelier n'existe plus…)
+    fn plan_still_valid(&self, i: usize) -> bool {
+        let b = &self.people[i].brain;
+        if b.plan.is_empty() || b.leaving {
+            return true;
+        }
+        if let Some(q) = b.intent.target() {
+            let p = &self.people[q as usize];
+            if !p.alive() || p.brain.leaving || p.village != self.people[i].village {
+                return false;
+            }
+        }
+        let Some(Step::Wait {
+            act, with: Some(w), ..
+        }) = b.plan.front()
+        else {
+            return true;
+        };
+        let vi = self.village_of(i);
+        let v = &self.villages[vi];
+        match act {
+            Act::Ploughing | Act::Sowing | Act::Tending | Act::Harvesting => {
+                let want = match act {
+                    Act::Ploughing => FieldState::Fallow,
+                    Act::Sowing => FieldState::Ploughed,
+                    Act::Tending => FieldState::Sown,
+                    _ => FieldState::Ripe,
+                };
+                v.fields.iter().any(|f| f.id == *w && f.state == want)
+            }
+            Act::Building => v.house(*w).is_some_and(|h| h.state == HouseState::Building),
+            Act::Milling | Act::Baking | Act::Forging => self.economy.workshops.contains_key(w),
+            _ => true,
+        }
+    }
+
+    /// Abandonne le plan en cours ; ce qu'on porte est rapporté au village.
+    fn abandon(&mut self, i: usize) {
+        let vi = self.village_of(i);
+        let b = &mut self.people[i].brain;
+        b.plan.clear();
+        b.path.clear();
+        b.path_pos = 0;
+        b.wait = 0;
+        b.intent = Intent::None;
+        if matches!(b.carry, Some(Carry::Good(_))) {
+            let door = self.villages[vi].door();
+            let door = self.map.idx(door.0, door.1) as u32;
+            self.plan(i, [Step::Go(door), Step::Deposit]);
+        }
+    }
+
     /// Une case libre et praticable près de chez soi (ou du grenier).
-    fn spot_near(&mut self, cx: u32, cy: u32, r: i64) -> u32 {
+    pub(super) fn spot_near(&mut self, cx: u32, cy: u32, r: i64) -> u32 {
         for _ in 0..12 {
             let x = cx as i64 + self.rng.range(-r, r);
             let y = cy as i64 + self.rng.range(-r, r);
@@ -352,124 +769,14 @@ impl World {
         self.near_home(i, 30 * MINUTE, Act::Playing);
     }
 
-    /// Temps libre : discuter au puits avec un ami, se promener, ou se reposer devant chez soi.
-    fn leisure(&mut self, i: usize, evening: bool) {
-        if self.rng.chance(if evening { 0.35 } else { 0.25 }) && self.chat(i) {
-            return;
-        }
-        if !evening && self.rng.chance(0.5) {
-            let v = &self.villages[self.village_of(i)];
-            let (x, y) = (v.x, v.y);
-            let spot = self.spot_near(x, y, 10);
-            self.plan(i, [Step::Go(spot), Self::wait(40 * MINUTE, Act::Strolling)]);
-            return;
-        }
-        self.near_home(i, 30 * MINUTE, Act::Idle);
-    }
-
-    /// Va discuter au puits avec un ami (qui vient aussi s'il est disponible).
-    fn chat(&mut self, i: usize) -> bool {
-        let tick = self.tick;
-        let me = self.people[i].id;
-        let friends: Vec<u32> = self.people[i]
-            .friends
-            .iter()
-            .filter(|&(_, &s)| s >= 15.0)
-            .map(|(&id, _)| id)
-            .filter(|&f| {
-                let q = &self.people[f as usize];
-                q.alive()
-                    && !q.brain.hidden
-                    && !q.brain.leaving
-                    && !q.child(tick)
-                    && q.village == self.people[i].village
-            })
-            .collect();
-        let Some(&f) = self.rng.pick(&friends) else {
-            return false;
-        };
-        let (wx, wy) = self.villages[self.village_of(i)].well;
-        let a = self.spot_near(wx, wy, 1);
-        let b = self.spot_near(wx, wy, 1);
-        self.plan(
-            i,
-            [
-                Step::Go(a),
-                Step::Wait {
-                    ticks: CHAT,
-                    act: Act::Chatting,
-                    with: Some(f),
-                },
-            ],
-        );
-        let fi = f as usize;
-        let fb = &mut self.people[fi].brain;
-        if fb.carry.is_none() && fb.wait == 0 {
-            fb.plan.clear();
-            fb.path.clear();
-            fb.path_pos = 0;
-            fb.plan.extend([
-                Step::Go(b),
-                Step::Wait {
-                    ticks: CHAT,
-                    act: Act::Chatting,
-                    with: Some(me),
-                },
-            ]);
-        }
-        true
-    }
-
-    fn work(&mut self, i: usize) {
-        let tick = self.tick;
-        let p = &self.people[i];
-        // Apprenti : suit son maître et l'imite.
-        if tick < p.apprentice_until
-            && let Some(m) = p.master
-        {
-            let q = &self.people[m as usize];
-            if q.alive() && !q.brain.hidden && !q.brain.leaving {
-                let (t, act) = (q.tile(self.map.width), q.brain.act);
-                let act = if act == Act::Idle || act == Act::Walking {
-                    Act::Learning
-                } else {
-                    act
-                };
-                self.plan(
-                    i,
-                    [
-                        Step::Go(t),
-                        Step::Wait {
-                            ticks: HOUR,
-                            act,
-                            with: Some(m),
-                        },
-                    ],
-                );
-                return;
-            }
-        }
-        if self.rng.chance(0.06) && self.chat(i) {
-            return;
-        }
+    /// Une séance de travail dans son métier. Faux s'il n'y a vraiment rien à faire.
+    fn work(&mut self, i: usize) -> bool {
         let vi = self.village_of(i);
         let has_stone = self.villages[vi].has_stone;
         let stock_of = |w: &World, g: Good| w.home_household(i).map_or(0.0, |h| h.inv[g as usize]);
         // Au-delà de ces réserves, on n'en produit plus (personne ne les achète).
         let glut = |w: &World, g: Good| stock_of(w, g) > 60.0;
         let job = self.people[i].job;
-        // Son métier ne rapporte presque rien et le foyer a de quoi voir venir : on se repose.
-        if let Some(j) = job
-            && j != Job::Builder
-            && self.job_value(vi, j) < 0.6
-            && self
-                .home_household(i)
-                .is_some_and(|h| h.coins > 10.0 && h.rations() > 14.0 * 3.0)
-            && self.rng.chance(0.7)
-        {
-            self.leisure(i, false);
-            return;
-        }
         let done = match job {
             Some(Job::Builder) => {
                 self.build(i, vi) || {
@@ -495,15 +802,17 @@ impl World {
             Some(Job::Baker) => self.workshop_work(i, vi, Workshop::Bakery),
             Some(Job::Smith) => self.workshop_work(i, vi, Workshop::Smithy),
             Some(Job::Farmer) => self.farm(i, vi),
+            Some(Job::Merchant) => self.merchant_work(i, vi),
             _ => false,
         };
         if !done {
             // Rien à faire dans son métier : on aide aux champs, sinon on coupe du bois.
             let ok = self.farm(i, vi) || (!glut(self, Good::Wood) && self.gather(i, vi, Good::Wood));
             if !ok {
-                self.leisure(i, false);
+                self.leisure(i);
             }
         }
+        true
     }
 
     /// Une ressource proche du village (bois ou pierre) et la case d'où la travailler.

@@ -56,17 +56,72 @@ fn main() {
             let start = Instant::now();
             let mut tally: std::collections::BTreeMap<String, usize> = Default::default();
             let mut seen = world.chronicle.next_seq;
+            // Part des adultes au travail / en visite, relevée à 10 h et 15 h.
+            let (mut working, mut social, mut samples) = (0.0f32, 0.0f32, 0.0f32);
+            let mut intents = [0.0f32; 12];
+            let mut intent_samples = 0.0f32;
             for day in 1..=days {
                 for _ in 0..TICKS_PER_DAY {
                     world.step();
+                    let c = world.clock();
+                    if (c.hour == 10 || c.hour == 15)
+                        && world.tick.is_multiple_of(hameaux_core::tuning::HOUR)
+                        && !hameaux_core::sim::rest_day(world.tick)
+                    {
+                        let s = world.mind_stats();
+                        working += s.working;
+                        for (k, v) in s.intents.iter().enumerate() {
+                            intents[k] += v;
+                        }
+                        intent_samples += 1.0;
+                        social += s.social;
+                        samples += 1.0;
+                    }
                 }
                 for e in world.chronicle.since(seen) {
-                    let kind: String = e.text.split_whitespace().take(2).collect::<Vec<_>>().join(" ");
+                    // Type d'événement : le premier mot et les mots sans majuscule (sans les noms).
+                    let kind: String = e
+                        .text
+                        .split_whitespace()
+                        .enumerate()
+                        .filter(|(k, w)| {
+                            let name = hameaux_core::names::FEMALE.contains(w)
+                                || hameaux_core::names::MALE.contains(w);
+                            (*k == 0 && !name) || w.chars().next().is_some_and(|c| !c.is_uppercase())
+                        })
+                        .map(|(_, w)| w)
+                        .take(5)
+                        .collect::<Vec<_>>()
+                        .join(" ");
                     *tally.entry(kind).or_default() += 1;
                 }
                 seen = world.chronicle.next_seq;
                 if day % 7 == 0 || day == days {
                     weekly(&world, day);
+                    let s = world.mind_stats();
+                    let needs: Vec<String> = hameaux_core::mind::NEED_LABELS
+                        .iter()
+                        .zip(s.needs)
+                        .map(|(l, v)| format!("{l} {v:.2}"))
+                        .collect();
+                    println!(
+                        "    esprits : humeur {:+.2} · bien-être {:.2} · compétence {:.2} · {:.0} relations · {:.1} souvenirs · au travail {:.0} % · en visite {:.0} %",
+                        s.mood,
+                        s.wellbeing,
+                        s.skill,
+                        s.relations,
+                        s.memories,
+                        100.0 * working / samples.max(1.0),
+                        100.0 * social / samples.max(1.0),
+                    );
+                    println!("        {}", needs.join(" · "));
+                    let levels: Vec<String> = hameaux_core::sim::LEVEL_LABELS
+                        .iter()
+                        .zip(s.levels)
+                        .map(|(l, v)| format!("{l} {:.0} %", 100.0 * v))
+                        .collect();
+                    println!("        métiers : {}", levels.join(" · "));
+                    (working, social, samples) = (0.0, 0.0, 0.0);
                 }
             }
             let secs = start.elapsed().as_secs_f64();
@@ -91,10 +146,75 @@ fn main() {
                     );
                 }
             }
+            println!("— intentions des adultes en âge de travailler (10 h et 15 h, jours ouvrés) —");
+            for (l, v) in hameaux_core::sim::INTENT_LABELS.iter().zip(intents) {
+                if v > 0.0 {
+                    println!("  {l:<12} {:>5.1} %", 100.0 * v / intent_samples.max(1.0));
+                }
+            }
+            let tick = world.tick;
+            let (mut idle, mut adults) = (0, 0);
+            for (i, p) in world.people.iter().enumerate() {
+                if !p.alive() || p.child(tick) || p.elder(tick) {
+                    continue;
+                }
+                let (Some(job), Some(vi)) = (p.job, world.village_index(p.village)) else {
+                    continue;
+                };
+                adults += 1;
+                if job != hameaux_core::people::Job::Builder
+                    && world.job_value(vi, job) < 0.6
+                    && world
+                        .home_household(i)
+                        .is_some_and(|h| h.coins > 10.0 && h.rations() > 42.0)
+                {
+                    idle += 1;
+                }
+            }
+            println!("  métier qui ne rapporte rien (chômage) : {idle} sur {adults}");
+            let tr = &world.trade;
+            let (trips, profit): (u32, f32) = tr
+                .traders
+                .values()
+                .fold((0, 0.0), |a, t| (a.0 + t.trips, a.1 + t.profit));
+            let roads = tr.routes.values().filter(|r| r.road).count();
+            println!(
+                "— commerce — {} villages · {} marchands en activité · {trips} voyages · bénéfice moyen {:.1} sous · {roads} routes",
+                world.villages.len(),
+                tr.traders.len(),
+                profit / trips.max(1) as f32
+            );
+            let sold: Vec<String> = hameaux_core::economy::Good::ALL
+                .iter()
+                .filter(|&&g| tr.sold[g as usize] >= 1.0)
+                .map(|&g| format!("{:.0} {}", tr.sold[g as usize], g.label()))
+                .collect();
+            println!("  vendu par les marchands : {}", sold.join(", "));
+            println!("— prix par village (offre/demande du dernier marché) —");
+            for (vi, v) in world.villages.iter().enumerate() {
+                let Some(m) = world.economy.markets.get(vi) else {
+                    continue;
+                };
+                let row: Vec<String> = hameaux_core::economy::Good::ALL
+                    .iter()
+                    .map(|&g| {
+                        let k = g as usize;
+                        format!(
+                            "{} {:.2} ({:.0}/{:.0})",
+                            &g.label()[..3],
+                            m.price[k],
+                            m.supply[k],
+                            m.demand[k]
+                        )
+                    })
+                    .collect();
+                println!("  {:<20} {}", v.name, row.join(" "));
+            }
+            society(&world);
             println!("— événements par type —");
             let mut kinds: Vec<_> = tally.into_iter().collect();
             kinds.sort_by_key(|k| std::cmp::Reverse(k.1));
-            for (k, n) in kinds.iter().take(25) {
+            for (k, n) in kinds.iter().take(60) {
                 println!("  {n:>6}  {k}…");
             }
             println!("— derniers événements —");
@@ -104,6 +224,75 @@ fn main() {
             }
         }
         _ => usage(),
+    }
+}
+
+/// Bilan de la vie collective : chefs, taxes, justice, fêtes, maladies, savoirs.
+fn society(world: &World) {
+    use hameaux_core::society::{Disease, Tech};
+    let s = &world.society.stats;
+    let deaths: u32 = s.deaths.iter().sum();
+    println!(
+        "— société — {} élections ({} destitutions) · {} vols, {} bagarres → {} amendes ({:.0} sous), {} pardons, {} bannis, {} impunis · {} fêtes, {} foires",
+        s.elections,
+        s.deposed,
+        s.thefts,
+        s.brawls,
+        s.fines,
+        s.fined,
+        s.pardons,
+        s.banished,
+        s.unpunished,
+        s.feasts,
+        s.fairs
+    );
+    let cases: Vec<String> = Disease::ALL
+        .iter()
+        .map(|&d| {
+            format!(
+                "{} {} cas / {} morts",
+                d.label(),
+                s.cases[d as usize],
+                s.deaths[d as usize]
+            )
+        })
+        .collect();
+    println!(
+        "  maladies : {} · {} épidémies · {deaths} morts en tout · {} malade(s) aujourd'hui",
+        cases.join(" · "),
+        s.epidemics,
+        world.society.sick.len()
+    );
+    println!(
+        "  savoirs : {} découvertes, {} transmissions",
+        s.inventions, s.spread
+    );
+    for v in &world.villages {
+        let Some(p) = world.society.polity(v.id) else {
+            continue;
+        };
+        let chief = p
+            .chief
+            .map(|c| world.people[c as usize].name())
+            .unwrap_or_else(|| "—".into());
+        let techs: Vec<&str> = Tech::ALL
+            .iter()
+            .filter(|&&t| p.knows(t))
+            .map(|t| t.label())
+            .collect();
+        println!(
+            "  {:<22} chef {:<22} ({} chefs) · conseil {} · taxe {:>2.0} % · {}",
+            v.name,
+            chief,
+            p.chiefs,
+            p.council.len(),
+            p.tax * 100.0,
+            if techs.is_empty() {
+                "—".to_string()
+            } else {
+                techs.join(", ")
+            }
+        );
     }
 }
 

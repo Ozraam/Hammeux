@@ -1,11 +1,12 @@
 //! Habitants.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::VecDeque;
 
 use serde::{Deserialize, Serialize};
 
 use crate::{
     economy::Good,
+    mind::Mind,
     tuning::{ADULT_AGE, ELDER_AGE, YEAR},
 };
 
@@ -22,10 +23,12 @@ pub enum Job {
     Fisher,
     Hunter,
     Miner,
+    // Phase 5.
+    Merchant,
 }
 
 impl Job {
-    pub const ALL: [Job; 10] = [
+    pub const ALL: [Job; 11] = [
         Job::Farmer,
         Job::Woodcutter,
         Job::Quarrier,
@@ -36,6 +39,7 @@ impl Job {
         Job::Fisher,
         Job::Hunter,
         Job::Miner,
+        Job::Merchant,
     ];
 
     pub fn label(self, female: bool) -> &'static str {
@@ -60,6 +64,8 @@ impl Job {
             (Job::Hunter, true) => "chasseuse",
             (Job::Miner, false) => "mineur",
             (Job::Miner, true) => "mineuse",
+            (Job::Merchant, false) => "marchand",
+            (Job::Merchant, true) => "marchande",
         }
     }
 }
@@ -76,6 +82,8 @@ pub enum Status {
 pub enum Carry {
     Good(Good),
     Bundle,
+    /// Charrette de marchand.
+    Cart,
 }
 
 /// Ce que fait un habitant (pour l'affichage).
@@ -106,6 +114,11 @@ pub enum Act {
     Milling,
     Baking,
     Forging,
+    Travelling,
+    Trading,
+    // Phase 6 (ajoutés à la fin : l'index est envoyé au navigateur).
+    Feasting,
+    Ill,
 }
 
 impl Act {
@@ -135,6 +148,10 @@ impl Act {
             Act::Milling => "moud du grain",
             Act::Baking => "cuit du pain",
             Act::Forging => "forge des outils",
+            Act::Travelling => "voyage",
+            Act::Trading => "attend le marché",
+            Act::Feasting => "fait la fête",
+            Act::Ill => "est malade, alité",
         }
     }
 }
@@ -144,6 +161,7 @@ impl Carry {
         match self {
             Carry::Good(g) => g.partitive(),
             Carry::Bundle => "son baluchon",
+            Carry::Cart => "sa charrette",
         }
     }
 }
@@ -167,8 +185,21 @@ pub enum Step {
     Gather(u32, Good),
     /// Transformer dans un atelier (moulin, four, forge).
     Craft(u32),
+    /// Conversation avec quelqu'un (à la fin d'une discussion).
+    Talk(u32),
+    /// À la fête : parler avec celui qui est le plus près.
+    Mingle,
     /// Entrer chez soi (dormir).
     Hide,
+    /// Dormir là où l'on est (à l'auberge d'un autre village).
+    HideHere,
+    /// Voyage vers un autre village par la route (`back` : retour au village).
+    Journey {
+        to: u32,
+        back: bool,
+    },
+    /// Arrivée au bout d'un voyage.
+    Arrive,
     /// Quitter le village pour de bon.
     Leave,
 }
@@ -187,6 +218,57 @@ pub struct Brain {
     pub carry_amount: f32,
     pub hidden: bool,
     pub leaving: bool,
+    /// En voyage entre deux villages (les changements d'heure ne l'interrompent pas).
+    pub traveling: bool,
+    /// Intention en cours (ce que le plan cherche à accomplir).
+    pub intent: Intent,
+}
+
+/// Intention choisie par l'IA à utilité ; elle se découpe ensuite en étapes ([`Step`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Intent {
+    #[default]
+    None,
+    Sleep,
+    Work,
+    Learn(u32),
+    Chat(u32),
+    Court(u32),
+    Visit(u32),
+    Stroll,
+    Rest,
+    Play,
+    Leave,
+    /// Aller à la fête (ou à la foire) du village.
+    Feast,
+}
+
+impl Intent {
+    /// Personne visée par l'intention.
+    pub fn target(self) -> Option<u32> {
+        match self {
+            Intent::Learn(p) | Intent::Chat(p) | Intent::Court(p) | Intent::Visit(p) => Some(p),
+            _ => None,
+        }
+    }
+
+    /// « veut discuter avec », « travaille »… (le nom de la personne visée suit).
+    pub fn label(self) -> &'static str {
+        match self {
+            Intent::None => "",
+            Intent::Sleep => "va dormir",
+            Intent::Work => "travaille",
+            Intent::Learn(_) => "apprend auprès de",
+            Intent::Chat(_) => "veut discuter avec",
+            Intent::Court(_) => "fait la cour à",
+            Intent::Visit(_) => "rend visite à",
+            Intent::Stroll => "prend l'air",
+            Intent::Rest => "se repose",
+            Intent::Play => "joue",
+            Intent::Leave => "s'en va",
+            Intent::Feast => "va à la fête",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -205,14 +287,14 @@ pub struct Person {
     pub partner: Option<u32>,
     pub parents: Vec<u32>,
     pub children: Vec<u32>,
-    /// Amitiés : identifiant → score 0–100.
-    pub friends: BTreeMap<u32, f32>,
     pub master: Option<u32>,
     pub apprentice_until: u64,
     pub x: f32,
     pub y: f32,
     /// Apparence : couleur de vêtement, de peau, de cheveux (indices).
     pub looks: [u8; 3],
+    /// Personnalité, besoins, humeur, souvenirs, relations, compétences, objectifs (phase 4).
+    pub mind: Mind,
     #[serde(skip)]
     pub brain: Brain,
 }

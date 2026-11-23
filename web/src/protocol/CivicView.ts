@@ -3,4 +3,12 @@
 /**
  * Grenier et puits d'un village.
  */
-export type CivicView = { village: number, x: number, y: number, well_x: number, well_y: number, color: number, };
+export type CivicView = { village: number, x: number, y: number, well_x: number, well_y: number, color: number, 
+/**
+ * Fête des moissons (ou premier jour de foire) aujourd'hui.
+ */
+feast: boolean, 
+/**
+ * Foire ouverte.
+ */
+fair: boolean, };

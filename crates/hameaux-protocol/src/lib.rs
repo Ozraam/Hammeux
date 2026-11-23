@@ -63,6 +63,9 @@ pub enum ServerMsg {
     /// Premier message après la connexion.
     Hello {
         server_version: String,
+        /// Script principal du client servi en ce moment (vide en développement avec Vite) ;
+        /// s'il diffère de celui de l'onglet, l'onglet se recharge.
+        web_build: String,
         #[ts(type = "number")]
         seed: u64,
         run: RunState,

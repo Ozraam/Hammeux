@@ -8,6 +8,9 @@ const LERP_MS = 260;
 const ROOFS = [0xb5523b, 0x8e3b2f, 0x6b4c3b, 0x9c6b3e, 0x7a5a8a, 0x4f6d7a];
 const SHIRTS = [0xd94f3d, 0x3d6fd9, 0xe0b13a, 0x4caf6b, 0x8e5fc2, 0xe07b39, 0x2fa7a7, 0xf2f2f2];
 /** Couleur de ce qui est porté : index du bien + 1 (voir `Good`), 255 = baluchon. */
+/** Code `carry` d'une charrette de marchand. */
+const CART = 254;
+
 const CARRY: Record<number, number> = {
   1: 0xe6c35c, // grain
   2: 0xf2ead8, // farine
@@ -22,6 +25,8 @@ const CARRY: Record<number, number> = {
 };
 /** `act` : index de `Act` côté Rust. */
 const ACT_CHATTING = 13;
+const ACT_FEASTING = 26;
+const FLAGS = [0xe0533d, 0xf2c94c, 0x3d8fd9, 0x4caf6b, 0xf2f2f2];
 
 interface Moving {
   dot: PersonDot;
@@ -119,6 +124,29 @@ export class SceneLayer {
       g.rect(c.x + 0.8, c.y + 1.2, 0.4, 0.65).fill(0x3a2615);
       g.circle(c.well_x + 0.5, c.well_y + 0.5, 0.36).fill(0x8f8a80).stroke({ color: 0x5a554c, width: 0.08 });
       g.circle(c.well_x + 0.5, c.well_y + 0.5, 0.2).fill(0x2f6fa3);
+      if (c.fair) {
+        // Étals de la foire devant le grenier : auvents rayés.
+        for (let k = 0; k < 3; k++) {
+          const sx = c.x - 1.2 + k * 1.3, sy = c.y + 2.4;
+          g.rect(sx, sy + 0.25, 0.9, 0.45).fill(0x9c6b3e).stroke({ color: 0x4a2f1a, width: 0.05 });
+          for (let s = 0; s < 3; s++) g.rect(sx - 0.05 + s * 0.33, sy, 0.33, 0.28).fill(s % 2 ? 0xf2f2f2 : FLAGS[k]);
+        }
+      }
+      if (c.feast) {
+        // Guirlande de fanions du grenier au puits, et un feu de joie.
+        const x0 = c.x + 2, y0 = c.y + 0.6, x1 = c.well_x + 0.5, y1 = c.well_y + 0.1;
+        g.moveTo(x0, y0).quadraticCurveTo((x0 + x1) / 2, Math.max(y0, y1) + 0.5, x1, y1).stroke({ color: 0x3a2a1a, width: 0.04 });
+        for (let k = 1; k < 6; k++) {
+          const t = k / 6;
+          const fx = x0 + (x1 - x0) * t;
+          const fy = (1 - t) * (1 - t) * y0 + 2 * t * (1 - t) * (Math.max(y0, y1) + 0.5) + t * t * y1;
+          g.poly([fx - 0.09, fy, fx + 0.09, fy, fx, fy + 0.2]).fill(FLAGS[k % FLAGS.length]);
+        }
+        const bx = c.well_x + 2.5, by = c.well_y + 1.5;
+        g.circle(bx, by, 0.32).fill({ color: 0xffb347, alpha: 0.35 });
+        g.poly([bx - 0.18, by + 0.15, bx, by - 0.3, bx + 0.18, by + 0.15]).fill(0xff7a2f);
+        g.poly([bx - 0.08, by + 0.15, bx, by - 0.1, bx + 0.08, by + 0.15]).fill(0xffe066);
+      }
     }
     for (const h of scene.houses) {
       const { x, y } = h;
@@ -203,13 +231,26 @@ export class SceneLayer {
       if (dot.id === this.selected) {
         g.circle(p.x, p.y, r * 2.2).fill({ color: 0xffe066, alpha: 0.35 }).stroke({ color: 0xffe066, width: r * 0.4 });
       }
-      g.circle(p.x, p.y, r).fill(shirt).stroke({ color: 0x1e1a14, width: r * 0.35 });
+      // Un malade a le teint verdâtre.
+      g.circle(p.x, p.y, r).fill(dot.sick ? mix(shirt, 0x9acd5a, 0.6) : shirt).stroke({ color: dot.sick ? 0x6f9a2f : 0x1e1a14, width: r * 0.35 });
       if (dot.stage === 2) g.circle(p.x, p.y - r * 0.2, r * 0.45).fill(0xdddddd);
-      if (dot.carry) {
+      if (dot.carry === CART) {
+        // Charrette : caisse brune et deux roues.
+        g.rect(p.x - r * 2.6, p.y - r * 0.9, r * 1.8, r * 1.2).fill(0x8a5a2b).stroke({ color: 0x1e1a14, width: r * 0.2 });
+        g.circle(p.x - r * 2.3, p.y + r * 0.45, r * 0.4).fill(0x3a2a1a);
+        g.circle(p.x - r * 1.1, p.y + r * 0.45, r * 0.4).fill(0x3a2a1a);
+      } else if (dot.carry) {
         g.rect(p.x + r * 0.6, p.y - r * 1.4, r * 1.1, r * 1.1).fill(CARRY[dot.carry] ?? 0x888888).stroke({ color: 0x1e1a14, width: r * 0.2 });
       }
       if (dot.act === ACT_CHATTING) {
         g.roundRect(p.x - r * 0.3, p.y - r * 3.2, r * 1.9, r * 1.2, r * 0.3).fill({ color: 0xffffff, alpha: 0.9 });
+      } else if (dot.act === ACT_FEASTING) {
+        // Danse : petits confettis qui tournent au-dessus de la tête.
+        const a = now / 300 + dot.id;
+        for (let k = 0; k < 3; k++) {
+          const t = a + (k * 2 * Math.PI) / 3;
+          g.circle(p.x + Math.cos(t) * r * 1.4, p.y - r * 2 + Math.sin(t) * r * 0.5, r * 0.28).fill(FLAGS[(dot.id + k) % FLAGS.length]);
+        }
       }
     }
   }

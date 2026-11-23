@@ -13,8 +13,6 @@ use crate::{
     world::World,
 };
 
-/// Taxe prélevée sur chaque vente (et sur les récoltes, en nature, pour le grenier commun).
-const TAX: f32 = 0.10;
 /// Jours de nourriture qu'un foyer veut avoir d'avance.
 const FOOD_DAYS: f32 = 7.0;
 /// Salaire d'un bâtisseur par voyage de matériaux, payé par la caisse du village.
@@ -36,7 +34,7 @@ pub(crate) fn resource_at(m: &Map, t: usize, g: Good) -> bool {
 }
 
 impl World {
-    pub(crate) fn home_household(&self, i: usize) -> Option<&Household> {
+    pub fn home_household(&self, i: usize) -> Option<&Household> {
         self.economy.households.get(&self.people[i].home?)
     }
 
@@ -45,11 +43,14 @@ impl World {
         Some(self.economy.household(h))
     }
 
-    /// Rendement ×1,4 avec un outil (qui s'use un peu à chaque séance).
+    /// Rendement ×1,4 avec un outil, qui s'use un peu à chaque séance : un débutant l'abîme
+    /// plus vite qu'un maître, qui sait l'entretenir (usure de ×1,2 à ×0,6).
     pub(super) fn tool_bonus(&mut self, i: usize) -> f32 {
+        let skill = self.people[i].job.map_or(0.3, |j| self.people[i].mind.skill(j));
+        let wear = 0.025 * (1.3 - 0.75 * skill);
         match self.home_household_mut(i) {
             Some(h) if h.inv[Good::Tools as usize] >= 0.05 => {
-                h.inv[Good::Tools as usize] -= 0.025;
+                h.inv[Good::Tools as usize] -= wear;
                 1.4
             }
             _ => 1.0,
@@ -75,8 +76,11 @@ impl World {
         }
         let mut keep = amount;
         if g == Good::Grain {
-            st.food = (st.food + amount * TAX * g.ration()).min(MAX_FOOD);
-            keep = amount * (1.0 - TAX);
+            // La taxe du village (fixée par le chef) se prélève aussi en grain.
+            let tax = self.society.tax(self.villages[vi].id);
+            let st = &mut self.villages[vi].stock;
+            st.food = (st.food + amount * tax * g.ration()).min(MAX_FOOD);
+            keep = amount * (1.0 - tax);
         }
         if let Some(h) = self.home_household_mut(i) {
             h.inv[g as usize] += keep;
@@ -99,7 +103,9 @@ impl World {
         let Some(&kind) = self.economy.workshops.get(&wid) else {
             return;
         };
-        let bonus = self.tool_bonus(i);
+        let bonus = self.work_bonus(i);
+        let sourdough = self.tech_bonus(i, crate::society::Tech::Sourdough, 1.15);
+        let tempering = self.tech_bonus(i, crate::society::Tech::Tempering, 1.4);
         let Some(h) = self.home_household_mut(i) else {
             return;
         };
@@ -122,13 +128,13 @@ impl World {
                 let n = (6.0 * bonus).min(inv[flour]).min(inv[wood] * 6.0);
                 inv[flour] -= n;
                 inv[wood] -= n / 6.0;
-                inv[bread] += n * 1.1;
+                inv[bread] += n * 1.1 * sourdough;
             }
             Workshop::Smithy => {
                 let k = (0.8 * bonus).min(inv[ore] / 2.0).min(inv[wood] / 2.0);
                 inv[ore] -= 2.0 * k;
                 inv[wood] -= 2.0 * k;
-                inv[tools] += k;
+                inv[tools] += k * tempering;
             }
         }
     }
@@ -221,6 +227,11 @@ impl World {
         let homes = self.homes(vi);
         let n = homes.len();
         let price = self.economy.markets[vi].price;
+        let village = self.villages[vi].id;
+        let tax = self.society.tax(village);
+        // Jour de foire : on achète plus volontiers, et les marchands venus d'ailleurs ne
+        // paient pas la taxe.
+        let fair = self.fair_open(village);
         // Offres de vente et besoins de chaque foyer.
         let mut sell = vec![[0.0f32; GOODS]; n];
         let mut buy = vec![[0.0f32; GOODS]; n];
@@ -254,6 +265,18 @@ impl World {
                 let gi = g as usize;
                 if target[gi] > h.inv[gi] {
                     buy[k][gi] = target[gi] - h.inv[gi];
+                }
+            }
+            // On aime varier : de la viande ou du poisson deux jours par semaine. On en prend
+            // moins quand c'est cher (plus du tout à deux fois et demie le prix habituel).
+            // C'est ce qui fait venir le poisson de la côte dans les villages de l'intérieur.
+            let protein = h.inv[Good::Meat as usize] + h.inv[Good::Fish as usize];
+            let want = members.len() as f32 * if fair { 3.0 } else { 2.0 } - protein;
+            if want > 0.5 {
+                for g in [Good::Meat, Good::Fish] {
+                    let base = g.base_price();
+                    let keen = ((2.5 * base - price[g as usize]) / base).clamp(0.0, 1.0);
+                    buy[k][g as usize] += want / 2.0 * keen;
                 }
             }
             // Nourriture : au-delà d'une semaine de réserve, on vend, en commençant par ce qu'on aime le moins.
@@ -322,9 +345,15 @@ impl World {
         let mut supply = [0.0f32; GOODS];
         let mut demand = [0.0f32; GOODS];
         let mut traded = [0.0f32; GOODS];
-        for k in 0..n {
+        // Les marchands de passage vendent toute leur cargaison.
+        let visitors = self.market_sellers(vi);
+        let mut offers = sell.clone();
+        for p in &visitors {
+            offers.push(self.trade.traders[p].cargo);
+        }
+        for row in &offers {
             for g in 0..GOODS {
-                supply[g] += sell[k][g];
+                supply[g] += row[g];
             }
         }
         let mut left = supply;
@@ -414,23 +443,52 @@ impl World {
         }
         self.villages[vi].stock.food = (self.villages[vi].stock.food + relief_got).min(MAX_FOOD);
 
-        // Paiement des vendeurs au prorata de leur offre, taxe au village.
+        // Les marchands chargent leur charrette avec ce qui reste.
+        for p in self.market_buyers(vi) {
+            let bought = self.trader_purchase(p, &price, &left);
+            for g in 0..GOODS {
+                left[g] -= bought[g];
+                traded[g] += bought[g];
+                demand[g] += bought[g];
+            }
+        }
+
+        // Paiement des vendeurs, taxe au village. Les acheteurs préfèrent le travail des
+        // meilleurs : quand tout ne se vend pas, ce qui vient d'un maître part d'abord, et à
+        // prix moyen égal, il se paie plus cher que celui d'un débutant (de ×0,8 à ×1,2).
         let mut revenue = [0.0f32; GOODS];
         for g in 0..GOODS {
             if supply[g] <= 0.0 {
                 continue;
             }
-            let sold_share = traded[g] / supply[g];
+            let worth: Vec<f32> = homes
+                .iter()
+                .map(|(_, members)| 0.8 + 0.4 * self.quality(members, Good::ALL[g]))
+                .chain(visitors.iter().map(|_| 1.0))
+                .collect();
+            let sold = share_by_quality(&offers, g, traded[g], &worth);
+            let paid: f32 = (0..offers.len())
+                .map(|k| sold[k] * worth[k])
+                .sum::<f32>()
+                .max(1e-6);
+            for (v, &p) in visitors.iter().enumerate() {
+                let k = n + v;
+                let money = traded[g] * price[g] * sold[k] * worth[k] / paid;
+                // (Les recettes des marchands ne comptent pas comme revenu d'un métier d'ici.)
+                let tax = if fair { 0.0 } else { tax };
+                treasury += money * tax;
+                self.trader_sold(p, g, sold[k], money * (1.0 - tax));
+            }
             for k in 0..n {
-                let units = sell[k][g] * sold_share;
-                let money = units * price[g];
+                let units = sold[k];
+                let money = traded[g] * price[g] * units * worth[k] / paid;
                 got[k][g] -= units;
-                let net = money * (1.0 - TAX);
+                let net = money * (1.0 - tax);
                 // Remboursement de l'avance sur la moitié des ventes.
                 let repay = debt[k].min(net * 0.5);
                 debt[k] -= repay;
                 coins[k] += net - repay;
-                treasury += money * TAX + repay;
+                treasury += money * tax + repay;
                 revenue[g] += money;
             }
         }
@@ -458,12 +516,13 @@ impl World {
         let m = &mut self.economy.markets[vi];
         for g in 0..GOODS {
             let (d, s) = (demand[g], supply[g]);
+            let base = Good::ALL[g].base_price();
+            // Rien ne s'échange : le prix revient doucement vers le prix habituel.
             let change = if d + s <= 0.0 {
-                0.0
+                0.03 * (base / m.price[g] - 1.0).clamp(-1.0, 1.0)
             } else {
                 0.12 * (d - s) / (d + s + 1.0)
             };
-            let base = Good::ALL[g].base_price();
             m.price[g] = (m.price[g] * (1.0 + change.clamp(-0.12, 0.12))).clamp(base * 0.3, base * 5.0);
         }
         m.supply = supply;
@@ -473,8 +532,45 @@ impl World {
         while m.history.len() > crate::economy::PRICE_HISTORY {
             m.history.pop_front();
         }
+        if fair {
+            self.fair_market(vi, &visitors);
+        }
     }
+}
 
+// ------------------------------------------------------------------ qualité
+
+/// Répartit `traded` unités vendues entre les vendeurs, en priorité selon la qualité
+/// (`worth`), sans dépasser ce que chacun a mis en vente.
+fn share_by_quality(sell: &[Inv], g: usize, traded: f32, worth: &[f32]) -> Vec<f32> {
+    let n = sell.len();
+    let mut sold = vec![0.0f32; n];
+    let mut left = traded;
+    // Quelques passes suffisent : chacune sert d'abord les mieux notés, au prorata.
+    for _ in 0..6 {
+        let weight: f32 = (0..n)
+            .filter(|&k| sell[k][g] - sold[k] > 1e-4)
+            .map(|k| (sell[k][g] - sold[k]) * worth[k] * worth[k])
+            .sum();
+        if left <= 1e-4 || weight <= 0.0 {
+            break;
+        }
+        let mut given = 0.0;
+        for k in 0..n {
+            let rest = sell[k][g] - sold[k];
+            if rest <= 1e-4 {
+                continue;
+            }
+            let a = (left * rest * worth[k] * worth[k] / weight).min(rest);
+            sold[k] += a;
+            given += a;
+        }
+        left -= given;
+    }
+    sold
+}
+
+impl World {
     // ------------------------------------------------------------------ repas
 
     /// Repas de midi : chaque foyer mange ses réserves (le meilleur d'abord), puis le grenier
@@ -497,6 +593,7 @@ impl World {
                     h.inv[gi] -= units;
                     need -= units * g.ration();
                 }
+                let cold = h.inv[Good::Wood as usize] < wood * 0.5;
                 h.inv[Good::Wood as usize] = (h.inv[Good::Wood as usize] - wood).max(0.0);
                 for g in Good::ALL {
                     h.inv[g as usize] *= 1.0 - g.spoil();
@@ -505,6 +602,21 @@ impl World {
                 let help = st.food.min(need);
                 st.food -= help;
                 need -= help;
+                // Plus rien au grenier : un ami peut partager ses provisions.
+                // … sinon, un affamé sans scrupules vole chez un voisin.
+                if need > 0.25 * full
+                    && (self.neighbourly_help(vi, *hid, members, need) > 0.0
+                        || self.steal_food(vi, *hid, members, need) > 0.0)
+                {
+                    let h = self.economy.household(*hid);
+                    for g in Good::FOODS {
+                        let gi = g as usize;
+                        let units = h.inv[gi].min(need / g.ration());
+                        h.inv[gi] -= units;
+                        need -= units * g.ration();
+                    }
+                }
+                self.fed(members, 1.0 - need / full.max(0.01), cold);
                 let h = self.economy.household(*hid);
                 if need > 0.25 * full {
                     h.hungry_days += 1;
@@ -529,6 +641,35 @@ impl World {
             }
             for hid in leaving {
                 self.famine_leave_house(vi, hid);
+            }
+        }
+    }
+
+    /// Après le repas : faim (et souvenir des jours de disette), froid l'hiver sans bois.
+    fn fed(&mut self, members: &[usize], share: f32, cold: bool) {
+        let winter = self.clock().season == Season::Winter;
+        for &m in members {
+            let mind = &mut self.people[m].mind;
+            mind.needs.food = share.clamp(0.0, 1.0);
+            if share < 0.75 {
+                mind.needs.safety = (mind.needs.safety - 0.2).max(0.0);
+                mind.mood.add(crate::mind::Emotion::Fear, 0.25);
+            }
+            mind.needs.warmth = if cold && winter {
+                (mind.needs.warmth - 0.35).max(0.0)
+            } else {
+                (mind.needs.warmth + 0.5).min(1.0)
+            };
+            if mind.needs.warmth < 0.3 {
+                mind.mood.add(crate::mind::Emotion::Sadness, 0.15);
+            }
+        }
+        if share < 0.75 {
+            let tick = self.tick;
+            for &m in members {
+                self.people[m]
+                    .mind
+                    .remember(tick, crate::mind::MemoryKind::Hunger, None, -0.5);
             }
         }
     }
@@ -559,13 +700,13 @@ impl World {
                 let e = &mut self.economy.income[vi][j];
                 *e = *e * 0.9 + per * 0.1;
             }
-            self.economy.today[vi] = [0.0; JOBS];
+            self.economy.today[vi] = vec![0.0; JOBS];
         }
     }
 
     /// Ce qu'un métier rapporterait par jour aux prix actuels du marché (production typique
     /// d'une journée, moins le coût des matières), mêlé au revenu réellement observé.
-    pub(crate) fn job_value(&self, vi: usize, job: Job) -> f32 {
+    pub fn job_value(&self, vi: usize, job: Job) -> f32 {
         let Some(m) = self.economy.markets.get(vi) else {
             return 1.0;
         };
@@ -588,6 +729,7 @@ impl World {
             Job::Miller => 20.0 * (p(Good::Flour) - p(Good::Grain)).max(0.0),
             Job::Baker => 15.0 * (1.1 * p(Good::Bread) - p(Good::Flour) - p(Good::Wood) / 6.0).max(0.0),
             Job::Smith => 2.0 * (p(Good::Tools) - 2.0 * p(Good::Ore) - 2.0 * p(Good::Wood)).max(0.0),
+            Job::Merchant => self.trade_potential(vi),
             Job::Builder => {
                 // Payé par voyage : vaut d'autant plus que des chantiers attendent sans bâtisseur.
                 let tick = self.tick;
@@ -642,6 +784,9 @@ impl World {
                 Job::Miller => count(j) < shops(Workshop::Mill),
                 Job::Baker => count(j) < shops(Workshop::Bakery),
                 Job::Smith => count(j) < shops(Workshop::Smithy),
+                // Un marchand dès quinze habitants, un de plus par trentaine, s'il y a des
+                // voisins à portée.
+                Job::Merchant => pop >= 15 && count(j) < 1 + pop / 30 && !self.neighbours(vi).is_empty(),
             })
             .collect()
     }
@@ -655,6 +800,15 @@ impl World {
                 continue;
             }
             let Some(job) = p.job else { continue };
+            // Un marchand ne change pas de métier en plein voyage.
+            if self
+                .trade
+                .traders
+                .get(&p.id)
+                .is_some_and(|t| t.leg != crate::trade::Leg::Idle)
+            {
+                continue;
+            }
             if !self.rng.chance(1.0 / 56.0) {
                 continue;
             }
@@ -780,5 +934,29 @@ impl World {
             let (vid, label) = (self.villages[vi].id, kind.a());
             self.event(Some(vid), vec![], format!("Nouveau chantier : {label}"));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::share_by_quality;
+    use crate::economy::GOODS;
+
+    /// Quand tout ne se vend pas, le maître vend d'abord ; personne ne vend plus qu'il n'a.
+    #[test]
+    fn masters_sell_first() {
+        let mut sell = vec![[0.0f32; GOODS]; 2];
+        sell[0][2] = 10.0; // débutant
+        sell[1][2] = 10.0; // maître
+        let worth = [0.84, 1.16];
+        let sold = share_by_quality(&sell, 2, 10.0, &worth);
+        assert!((sold[0] + sold[1] - 10.0).abs() < 1e-3);
+        assert!(sold[1] > sold[0] * 1.5, "{sold:?}");
+        // Tout se vend : chacun écoule tout, quelle que soit la qualité.
+        let sold = share_by_quality(&sell, 2, 20.0, &worth);
+        assert!(
+            (sold[0] - 10.0).abs() < 1e-3 && (sold[1] - 10.0).abs() < 1e-3,
+            "{sold:?}"
+        );
     }
 }

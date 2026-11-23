@@ -13,10 +13,14 @@ stage: number,
  */
 act: number, 
 /**
- * Ce qu'il porte : 0 rien, 1 + index du bien (`Good`), 255 son baluchon.
+ * Ce qu'il porte : 0 rien, 1 + index du bien (`Good`), 254 une charrette, 255 son baluchon.
  */
 carry: number, 
 /**
  * Vêtement, peau, cheveux.
  */
-looks: [number, number, number], };
+looks: [number, number, number], 
+/**
+ * Malade.
+ */
+sick: boolean, };

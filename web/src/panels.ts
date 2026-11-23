@@ -110,18 +110,29 @@ export class Panel {
       <button class="close" data-close aria-label="Fermer">×</button>
       <h2>${esc(p.name)}</h2>
       <p class="sub">${esc(p.role)} · ${p.age} ans · <a data-village="${p.village}">${esc(p.village_name)}</a></p>
+      ${p.office ? `<p class="office">${esc(cap(p.office))}</p>` : ""}
       ${p.alive ? `<p class="now">${p.hidden ? "Dort chez lui" + (p.female ? "le" : "") : esc(cap(p.doing))}</p>` : `<p class="now">${esc(cap(p.status))}</p>`}
+      ${p.alive ? `<p class="mood"><span class="dot" style="background:${moodColor(p.mood_value)}"></span>${esc(cap(p.mood))}</p>${p.traits.length ? `<p class="traits muted">${esc(cap(p.traits.join(", ")))}</p>` : ""}` : ""}
+      ${p.health ? `<p class="sick">${esc(cap(p.health))}</p>` : ""}
       ${actions}
       <dl>
         ${p.home ? `<dt>Maison</dt><dd>${esc(p.home)}</dd>` : ""}
         <dt>Naissance</dt><dd>${esc(p.born)}</dd>
         ${p.master ? `<dt>Apprenti${p.female ? "e" : ""} de</dt><dd>${link(p.master)}</dd>` : ""}
+        ${p.skill ? `<dt>Métier</dt><dd>${esc(p.skill.rank)} ${meter(p.skill.value)}</dd>` : ""}
+        ${p.alive ? `<dt>Réputation</dt><dd>${esc(p.reputation_label)}</dd>` : ""}
+        ${p.convictions ? `<dt>Justice</dt><dd>condamné${p.female ? "e" : ""} ${p.convictions === 1 ? "une fois" : `${p.convictions} fois`}</dd>` : ""}
+        ${p.goals.length ? `<dt>Rêve${p.goals.length > 1 ? "s" : ""}</dt><dd>${p.goals.map((g) => (g.reached ? `<s class="muted">${esc(g.label)}</s> ✓` : esc(g.label))).join("<br>")}</dd>` : ""}
       </dl>
+      ${p.alive ? `<h3>Besoins</h3><div class="needs">${p.needs.map((n) => `<span>${esc(n.label)}</span>${meter(n.value)}`).join("")}</div>` : ""}
       ${p.household ? `<h3>Son foyer</h3>
         <p>${money(p.household.coins)} · ${Math.round(p.household.food_days)} jours de vivres${p.household.hungry ? ` · <b class="warn">a faim</b>` : ""}</p>
         <p class="muted">${p.household.goods.map((g) => `${qty(g.amount)} ${esc(g.label)}`).join(" · ") || "réserves vides"}</p>` : ""}
       <h3>Famille</h3>${list(p.family)}
-      <h3>Amis</h3>${list(p.friends)}
+      <h3>Relations</h3>${list(p.relations)}
+      ${p.memories.length ? `<h3>Souvenirs</h3><ul class="memories">${p.memories
+        .map((m) => `<li class="${m.weight >= 0 ? "good" : "bad"}">${m.who !== null ? `<a data-person="${m.who}">${esc(m.text)}</a>` : esc(m.text)} <span class="muted date">· ${esc(m.date)}</span></li>`)
+        .join("")}</ul>` : ""}
       <h3>Sa vie</h3>${this.eventsHtml(p.events, false)}
     `;
   }
@@ -131,7 +142,7 @@ export class Panel {
     return `
       <button class="close" data-close aria-label="Fermer">×</button>
       <h2><span class="swatch" style="background:${css(v.color)}"></span>${esc(v.name)}</h2>
-      <p class="sub">${esc(v.founded)}</p>
+      <p class="sub">${esc(v.founded)}${v.founded_from ? ` par des familles de <a data-village="${v.founded_from.id}">${esc(v.founded_from.name)}</a>` : ""}</p>
       <div class="row"><button data-goto="${v.x + 1},${v.y + 1}">Aller au village</button></div>
       <dl>
         <dt>Habitants</dt><dd>${v.population} (dont ${v.children} enfants, ${v.elders} aînés)</dd>
@@ -140,9 +151,18 @@ export class Panel {
         <dt>Champs</dt><dd>${v.fields}${v.fields_ripe ? ` (${v.fields_ripe} prêts à moissonner)` : ""}</dd>
         <dt>Vivres</dt><dd>${v.food_days} jours (grenier commun : ${Math.round(v.food)} rations)${v.hungry ? ` <b class="warn">disette</b>` : ""}</dd>
         <dt>Chantiers</dt><dd>${v.wood} bois · ${v.has_stone ? `${v.stone} pierre` : "pas de carrière"}</dd>
-        <dt>Caisse</dt><dd>${money(v.treasury)}</dd>
+        <dt>Caisse</dt><dd>${money(v.treasury)} · taxe ${Math.round(v.tax * 100)} %</dd>
+        <dt>Santé</dt><dd>${v.epidemic ? `<b class="warn">${esc(v.epidemic)}</b> · ` : ""}${v.sick ? `${v.sick} malade${v.sick > 1 ? "s" : ""}` : "personne n'est malade"}</dd>
+        ${v.festivities.length ? `<dt>Fêtes</dt><dd>${v.festivities.map(esc).join("<br>")}</dd>` : ""}
         <dt>Ateliers</dt><dd>${v.workshops.length ? v.workshops.map(esc).join(", ") : "aucun"}</dd>
       </dl>
+      <h3>Gouvernement</h3>
+      ${v.chief
+        ? `<p><a data-person="${v.chief.id}">${esc(v.chief.name)}</a> <span class="muted">· ${esc(v.chief.note)}</span>${v.council.length ? `<br><span class="muted">conseil :</span> ${v.council.map((r) => `<a data-person="${r.id}">${esc(r.name)}</a>`).join(", ")}` : ""}<br><span class="muted">${esc(v.next_election)}</span></p>`
+        : `<p class="muted">${esc(v.next_election)}</p>`}
+      ${v.techs.length ? `<h3>Savoirs</h3><ul class="techs">${v.techs
+        .map((t) => `<li><b>${esc(cap(t.label))}</b> <span class="muted">· ${esc(t.effect)}</span><br><span class="muted date">${t.by !== null ? `<a data-person="${t.by}">${esc(t.origin)}</a>` : t.from ? `<a data-village="${t.from.id}">${esc(t.origin)}</a>` : esc(t.origin)}</span></li>`)
+        .join("")}</ul>` : ""}
       <h3>Marché</h3>
       <table class="market">
         <tr><th></th><th>prix</th><th>7 j</th><th>vendu</th></tr>
@@ -154,6 +174,17 @@ export class Panel {
           })
           .join("")}
       </table>
+      ${v.merchants.length ? `<h3>Marchands</h3><ul>${v.merchants.map((r) => `<li><a data-person="${r.id}">${esc(r.name)}</a> <span class="muted">· ${esc(r.note)}</span></li>`).join("")}</ul>` : ""}
+      ${v.links.length ? `<h3>Autres villages</h3><table class="links">
+        <tr><th></th><th>trajet</th><th>nouvelles</th></tr>
+        ${v.links
+          .map(
+            (l) => `<tr><td><a data-village="${l.village.id}">${esc(l.village.name)}</a>${l.dearer.length ? `<br><span class="muted">plus cher là-bas : ${l.dearer.map(esc).join(", ")}</span>` : ""}</td>
+              <td>${l.way ? `${esc(l.way)}${l.trips ? ` <span class="muted">(${l.trips})</span>` : ""}` : "—"}</td>
+              <td class="muted">${esc(l.news) || "aucune"}</td></tr>`,
+          )
+          .join("")}
+      </table>` : ""}
       <h3>Derniers événements</h3>${this.eventsHtml(v.events, false)}
     `;
   }
@@ -221,6 +252,19 @@ function spark(values: number[]): string {
   const span = max - min || 1;
   const pts = values.map((v, i) => `${((i / (values.length - 1)) * w).toFixed(1)},${(h - 1 - ((v - min) / span) * (h - 2)).toFixed(1)}`);
   return `<svg class="spark" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><polyline points="${pts.join(" ")}" /></svg>`;
+}
+
+/** Petite jauge 0–1. */
+function meter(v: number): string {
+  const pct = Math.round(Math.max(0, Math.min(1, v)) * 100);
+  const cls = v < 0.3 ? "low" : v < 0.6 ? "mid" : "";
+  return `<span class="meter ${cls}" title="${pct} %"><i style="width:${pct}%"></i></span>`;
+}
+
+/** Couleur de l'humeur : rouge (au plus mal) → jaune → vert (radieux). */
+function moodColor(v: number): string {
+  const t = Math.max(0, Math.min(1, (v + 0.6) / 1.4));
+  return `hsl(${Math.round(t * 120)}, 65%, 55%)`;
 }
 
 function cap(s: string) {
