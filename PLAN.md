@@ -124,7 +124,7 @@ Le moteur expose une liste de commandes (`GodCommand`) ; `hameaux-cli` peut les 
 
 Chaque phase se termine par quelque chose de visible dans le navigateur et par des tests sans écran (`hameaux-cli`, comme `VillageBalanceTest`).
 
-0. ✅ **Socle** (20/11/2026) : workspace Cargo (`hameaux-core`, `hameaux-protocol`, `hameaux-server`, `hameaux-cli`), calendrier (1 tick = 10 s de jeu), sauvegardes versionnées avec rotation, boucle de simulation sur son fil, API (`/health`, `/ws`, pause/vitesse/sauvegarde), page web PixiJS (ciel jour/nuit et saisons), `Dockerfile` + compose + `deploy.sh`, CI GitHub Actions. Reste à faire : premier déploiement sur la tour.
+0. ✅ **Socle** (20/11/2026) : workspace Cargo (`hameaux-core`, `hameaux-protocol`, `hameaux-server`, `hameaux-cli`), calendrier (1 tick = 10 s de jeu), sauvegardes versionnées avec rotation, boucle de simulation sur son fil, API (`/health`, `/ws`, pause/vitesse/sauvegarde), page web PixiJS (ciel jour/nuit et saisons), `Dockerfile` + compose + `deploy.sh`, CI GitHub Actions, premier déploiement sur la tour.
 1. ✅ **Monde** (20/11/2026) :
    - `hameaux-worldgen` : relief (bruit fractal + dôme continental + chaînes de montagnes, répartition par rang pour maîtriser la part de mer), mer reliée au bord, écoulement par remplissage de priorité (rivières de 3 tailles, lacs dans les cuvettes profondes), humidité et température, 13 milieux, fertilité, 6 ressources (pierre, fer, argile, poisson, gibier, baies), 12 villages placés selon la fertilité et l'eau douce, avec noms (« -sur-Mer », « -les-Bois »…) et couleurs. 1024×1024 en ~0,15 s ; déterministe (testé).
    - Sauvegarde v2 (~1 Mo) ; une sauvegarde v1 de la phase 0 est reprise au même tick avec une carte générée depuis sa graine.
@@ -209,8 +209,39 @@ Chaque phase se termine par quelque chose de visible dans le navigateur et par d
    - Site : jauge de foi sous l'horloge, palette « ✦ Pouvoirs » par catégorie (grisés quand la foi manque), bandeau qui demande la cible (clic sur un village, un habitant ou une case ; maladie ou ressource à choisir ; nom à taper), Échap pour annuler, message du résultat ; pouvoirs aussi dans les fiches (bénir, maudire, guérir, inspirer, faire se rencontrer… ; pluie, fête, épidémie… pour un village) ; effets dessinés autour du grenier (pluie, orage et éclairs, chaleur de la sécheresse, essaim de sauterelles, poissons et feuilles, paillettes dorées), éclat doré sur tout l'écran au signe dans le ciel, halo des fidèles qui prient, temple (toit d'ardoise, clocheton) ; page `#/ciel` : foi, croyants, cultes, ferveur, prêtres, temples, effets en cours et journal des actes.
    - `hameaux-cli run --god actes.json` rejoue des commandes datées (le journal du serveur tel quel, ou `day` au lieu de `tick`) ; `--god demo` laisse un dieu automatique essayer chaque pouvoir dès que la foi le permet ; bilan du Ciel en fin de course.
    - Équilibre (`hameaux-cli run --days 336`) : sans dieu, simulation inchangée (695 habitants, ~50 000 ticks/s). Avec `--god demo` : 242 actes (44 refus), 762 habitants (les pèlerins), 358 croyants sur 762, 17 cultes nés (aucun éteint), 18 prêtres, 9 temples ; la plupart des villages « te craignent et t'implorent » (le dieu automatique alterne bienfaits et fléaux), ceux qu'il a surtout bénis « te vénèrent ». Limites connues : la foi plafonne vite quand beaucoup prient (il faudrait des pouvoirs plus chers, ou des prières qui comptent moins) ; pas encore de prophète ni d'interprétation des présages ; les rêves et présages poussent peu les décisions (seulement un objectif de vie) ; pas encore de tremblement de terre, crue ni hiver rude ; le temple n'a pas encore de rôle à part la prière (fêtes religieuses, mariages).
-9. **Option** : récits rédigés par un LLM à partir de la chronique (biographies, gazette hebdomadaire du monde).
-10. **Plus tard** : lien avec le launcher TV (afficher un village du serveur à la place du village local), via l'API REST/WebSocket existante.
+9. **Tension économique** (24/11/2026, à faire) — limites des phases 3 à 6 qui viennent toutes de la surabondance :
+   - Terre plus rare : les champs demandent du travail toute l'année (fumure, entretien), les bonnes terres proches s'épuisent, plus de bouches que de champs.
+   - Outils : plusieurs forges par village, production selon la compétence, pour que les outils ne soient plus rares et chers partout.
+   - Morte-saison : métiers d'appoint (fermiers au bois ou aux chantiers l'hiver), pour que plus de la moitié des adultes travaillent en journée.
+   - Marchands : coût du voyage compté, préférence pour les allers-retours rentables (aujourd'hui ~6 sous de bénéfice moyen).
+   - Inégalités : l'argent ne se concentre plus seulement chez ceux dont les produits se vendent.
+   - Effets attendus : vraies disettes ponctuelles, prix qui bougent, entraide visible, vols de provisions plutôt que d'argent.
+   - Équilibre : plus de 60 % des adultes au travail à 10 h et 15 h, prix hors plancher, quelques disettes sans effondrement.
+10. **Météo et risques** (à faire) :
+   - Météo simulée par région (fronts qui traversent la carte), éventuellement calée sur Open-Meteo ; aujourd'hui seule la pluie du mode dieu existe.
+   - Risques en route : neige, routes boueuses, retards, cargaisons perdues, brigands sur les longs trajets.
+   - Hiver rude, crue et incendie de forêt naturels, et aussi en pouvoirs du dieu.
+11. **Vie collective** (à faire) :
+   - Grands travaux votés par le conseil et payés par la caisse : pont, mur, temple agrandi.
+   - Migrations volontaires vers les villages prospères (aujourd'hui seulement en disette).
+   - Rivalités entre villages (jalousie commerciale, querelles de frontière), puis alliances.
+   - Temple : fêtes religieuses, mariages.
+   - Destitutions plus fréquentes (seuils revus) ; foires des petits villages regroupées avec leurs voisins.
+12. **Religion v2** (à faire) :
+   - Foi : pouvoirs plus chers à l'usage ou prières qui comptent moins quand elles sont nombreuses (la foi plafonne vite aujourd'hui).
+   - Prophète et interprétation des présages ; rêves et présages qui poussent vraiment les décisions (partir, se marier, bâtir un temple).
+   - Pouvoirs manquants : tremblement de terre, envoyer un étranger (marchand, prophète, réfugiés).
+13. **Monde plus riche** (à faire, après la phase 9 pour ne pas ajouter de l'abondance) :
+   - Biens manquants (9 sur ~23) : légumes, fruits, lait, laine, argile, plantes, planches, briques, fer, tissu, vêtements, poteries, bière, meubles.
+   - Ateliers correspondants : scierie, four à briques, tisserand, brasserie.
+14. **Échelle et infrastructure** (à faire) :
+   - Mesure à ~5 000 habitants (aujourd'hui ~700), puis A* hiérarchique, cache des trajets fréquents, systèmes indépendants en parallèle (`rayon`).
+   - Historique dans SQLite plutôt qu'entièrement en mémoire et dans la sauvegarde.
+   - Administration : nouvelle graine, restauration d'une sauvegarde.
+   - Site : tableaux de bord en direct (WebSocket) au lieu de toutes les 20 s, comparaison des prix entre villages sur un même graphique.
+   - Sorte d'événement donnée par le moteur plutôt que reconnue à la formulation.
+15. **Option** : récits rédigés par un LLM à partir de la chronique (biographies, gazette hebdomadaire du monde).
+16. **Plus tard** : lien avec le launcher TV (afficher un village du serveur à la place du village local), via l'API REST/WebSocket existante.
 
 Ordre conseillé : 0 → 1 → 2 rapidement pour avoir un monde qui tourne sur le serveur, puis enrichir. L'équilibrage (`hameaux-cli --seed 42 --years 50`, rapport de population, prix et famines) se fait à chaque phase, pas à la fin.
 
