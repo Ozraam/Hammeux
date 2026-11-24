@@ -15,6 +15,16 @@ use crate::{
 
 /// Jours de nourriture qu'un foyer veut avoir d'avance.
 const FOOD_DAYS: f32 = 7.0;
+/// Jours de vivres qu'un foyer de fermiers garde pour faire la soudure jusqu'à la moisson.
+const HARVEST_STORE_DAYS: f32 = 16.0;
+/// Jours de vivres que la caisse veut au grenier commun.
+const RELIEF_DAYS: f32 = 7.0;
+/// Avance au plus de la caisse du village à un artisan (pour ses matières).
+const ADVANCE_MAX: f32 = 60.0;
+/// Habitants par forge : un village qui grandit en bâtit une deuxième, puis une troisième.
+const PEOPLE_PER_SMITHY: usize = 28;
+/// Un foyer qui a plus que ceci (plus un peu par bouche) loue des bras pour son bois.
+const HIRE_COINS: f32 = 45.0;
 /// Salaire d'un bâtisseur par voyage de matériaux, payé par la caisse du village.
 const BUILDER_WAGE: f32 = 1.0;
 
@@ -87,6 +97,8 @@ impl World {
         }
     }
 
+    /// Salaire d'un voyage de matériaux (bâtisseur, ou journalier en morte-saison), payé par
+    /// la caisse du village ; il compte dans ce que rapporte le métier de celui qui l'a fait.
     pub(super) fn pay_builder(&mut self, i: usize, vi: usize) {
         self.economy.ensure_village(vi);
         let t = &mut self.economy.treasury[vi];
@@ -95,7 +107,119 @@ impl World {
         if let Some(h) = self.home_household_mut(i) {
             h.coins += pay;
         }
-        self.economy.today[vi][Job::Builder as usize] += pay;
+        let job = self.people[i].job.unwrap_or(Job::Builder);
+        self.economy.today[vi][job as usize] += pay;
+    }
+
+    /// La moisson d'un champ va à son foyer (une part au grenier commun : la taxe). Celui qui
+    /// aide à moissonner le champ d'un autre garde sa part ; un champ qui n'est à personne
+    /// nourrit le grenier commun.
+    pub(super) fn bring_harvest(&mut self, i: usize, vi: usize, fid: u32) {
+        let owner = self.land.soil(fid).owner;
+        let home = self.people[i].home;
+        if owner.is_some() && owner == home {
+            self.deposit(i, vi);
+            return;
+        }
+        let b = &mut self.people[i].brain;
+        let (carry, amount) = (b.carry.take(), b.carry_amount);
+        b.carry_amount = 0.0;
+        let Some(Carry::Good(g)) = carry else { return };
+        let share = amount * crate::land::REAPER_SHARE;
+        let rest = amount - share;
+        if let Some(h) = self.home_household_mut(i) {
+            h.inv[g as usize] += share;
+        }
+        let tax = self.society.tax(self.villages[vi].id);
+        match owner.filter(|o| self.economy.households.contains_key(o)) {
+            Some(o) => {
+                let st = &mut self.villages[vi].stock;
+                st.food = (st.food + rest * tax * g.ration()).min(MAX_FOOD);
+                self.economy.household(o).inv[g as usize] += rest * (1.0 - tax);
+            }
+            None => {
+                let st = &mut self.villages[vi].stock;
+                st.food = (st.food + rest * g.ration()).min(MAX_FOOD);
+            }
+        }
+    }
+
+    /// Ce qu'un journalier rapporte pour le village va au grenier commun, et la caisse le paie.
+    pub(super) fn deliver(&mut self, i: usize, vi: usize) {
+        let b = &mut self.people[i].brain;
+        let (carry, amount) = (b.carry.take(), b.carry_amount);
+        b.carry_amount = 0.0;
+        let Some(Carry::Good(g)) = carry else { return };
+        let st = &mut self.villages[vi].stock;
+        match g {
+            Good::Wood => st.wood = (st.wood + amount.round() as u32).min(MAX_WOOD),
+            Good::Stone => st.stone = (st.stone + amount.round() as u32).min(MAX_STONE),
+            _ => st.food = (st.food + amount * g.ration()).min(MAX_FOOD),
+        }
+        self.pay_builder(i, vi);
+    }
+
+    /// Un foyer aisé qui paierait un voisin pour lui couper son bois (pas le sien).
+    pub(super) fn employer(&self, vi: usize, i: usize) -> Option<u32> {
+        let mine = self.people[i].home;
+        self.homes(vi)
+            .into_iter()
+            .filter(|(h, _)| Some(*h) != mine)
+            .filter_map(|(h, members)| {
+                let hh = self.economy.households.get(&h)?;
+                let rich = hh.coins > HIRE_COINS + 6.0 * members.len() as f32;
+                let wants = hh.inv[Good::Wood as usize] < 25.0 + 4.0 * members.len() as f32;
+                (rich && wants).then_some((hh.coins, h))
+            })
+            .max_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, h)| h)
+    }
+
+    /// Livraison au foyer qui a loué le journalier : il paie le bois au prix du marché, plus
+    /// la peine (au moins le salaire d'un bâtisseur).
+    pub(super) fn deliver_to(&mut self, i: usize, house: u32) {
+        let vi = self.village_of(i);
+        let b = &mut self.people[i].brain;
+        let (carry, amount) = (b.carry.take(), b.carry_amount);
+        b.carry_amount = 0.0;
+        let Some(Carry::Good(g)) = carry else { return };
+        let price = self
+            .economy
+            .markets
+            .get(vi)
+            .map_or(g.base_price(), |m| m.price[g as usize]);
+        let Some(boss) = self.economy.households.get_mut(&house) else {
+            // Le foyer n'existe plus : on garde ce qu'on a rapporté.
+            if let Some(h) = self.home_household_mut(i) {
+                h.inv[g as usize] += amount;
+            }
+            return;
+        };
+        let pay = (amount * price + 0.5).max(BUILDER_WAGE).min(boss.coins);
+        boss.coins -= pay;
+        boss.inv[g as usize] += amount;
+        if let Some(h) = self.home_household_mut(i) {
+            h.coins += pay;
+        }
+        let job = self.people[i].job.unwrap_or(Job::Woodcutter);
+        self.economy.ensure_village(vi);
+        self.economy.today[vi][job as usize] += pay;
+    }
+
+    /// La caisse dépasse-t-elle sa réserve (voir la taille et l'aumône) ?
+    pub(super) fn treasury_full(&self, vi: usize) -> bool {
+        let pop = self.population(self.villages[vi].id) as f32;
+        let reserve = crate::land::RESERVE + crate::land::RESERVE_PER_HEAD * pop;
+        self.economy.treasury.get(vi).is_some_and(|&t| t > reserve)
+    }
+
+    /// La caisse peut-elle payer des journaliers ? (elle garde de quoi remplir le grenier).
+    pub(super) fn can_hire(&self, vi: usize) -> bool {
+        let pop = self.population(self.villages[vi].id) as f32;
+        self.economy
+            .treasury
+            .get(vi)
+            .is_some_and(|&t| t > 10.0 + pop * 0.5)
     }
 
     /// Une séance d'atelier : transforme les matières du foyer de l'artisan.
@@ -104,6 +228,8 @@ impl World {
             return;
         };
         let bonus = self.work_bonus(i);
+        // Un forgeron habile tire bien plus d'outils du même minerai qu'un débutant.
+        let smith_skill = self.people[i].mind.skill(Job::Smith);
         let sourdough = self.tech_bonus(i, crate::society::Tech::Sourdough, 1.15);
         let tempering = self.tech_bonus(i, crate::society::Tech::Tempering, 1.4);
         let Some(h) = self.home_household_mut(i) else {
@@ -131,7 +257,9 @@ impl World {
                 inv[bread] += n * 1.1 * sourdough;
             }
             Workshop::Smithy => {
-                let k = (0.8 * bonus).min(inv[ore] / 2.0).min(inv[wood] / 2.0);
+                let k = ((0.35 + 1.1 * smith_skill) * bonus)
+                    .min(inv[ore] / 2.0)
+                    .min(inv[wood] / 2.0);
                 inv[ore] -= 2.0 * k;
                 inv[wood] -= 2.0 * k;
                 inv[tools] += k * tempering;
@@ -143,7 +271,7 @@ impl World {
     // ------------------------------------------------------------------ foyers
 
     /// Les maisons d'habitation (pas les ateliers) d'un village, avec leurs habitants vivants.
-    fn homes(&self, vi: usize) -> Vec<(u32, Vec<usize>)> {
+    pub(super) fn homes(&self, vi: usize) -> Vec<(u32, Vec<usize>)> {
         self.villages[vi]
             .houses
             .iter()
@@ -178,11 +306,12 @@ impl World {
 
     fn firewood(&self, members: &[usize]) -> f32 {
         let per = if self.clock().season == Season::Winter {
-            0.35
+            0.45
         } else {
-            0.1
+            0.15
         };
-        members.len() as f32 * per
+        // (plus l'entretien de la maison)
+        members.len() as f32 * per + crate::land::HOUSE_UPKEEP
     }
 
     /// Ce qu'un foyer veut garder de chaque bien (réserves de vie et matières de travail).
@@ -211,7 +340,10 @@ impl World {
             }
         }
         t[Good::Tools as usize] = workers;
-        (t, self.need(members) * FOOD_DAYS)
+        // Un foyer qui cultive garde sa provision jusqu'à la prochaine moisson (la soudure).
+        let farming = members.iter().any(|&m| self.people[m].job == Some(Job::Farmer));
+        let days = if farming { HARVEST_STORE_DAYS } else { FOOD_DAYS };
+        (t, self.need(members) * days)
     }
 
     // ------------------------------------------------------------------ marché
@@ -240,6 +372,14 @@ impl World {
         for (k, (hid, members)) in homes.iter().enumerate() {
             let (target, reserve) = self.targets(members);
             let h = self.economy.households.get(hid).cloned().unwrap_or_default();
+            // Les foyers aisés gardent plus de réserves et mangent plus souvent de la viande ou
+            // du poisson : c'est ainsi que leur argent revient à ceux qui les produisent.
+            let well_off = h.coins > HIRE_COINS + 6.0 * members.len() as f32;
+            let reserve = if well_off {
+                reserve * 10.0 / FOOD_DAYS
+            } else {
+                reserve
+            };
             for g in Good::ALL {
                 let gi = g as usize;
                 if g.is_food() {
@@ -250,7 +390,7 @@ impl World {
                     if h.inv[gi] < 0.3 * target[gi] {
                         buy[k][gi] = (target[gi] - h.inv[gi]).max(0.0);
                     } else {
-                        sell[k][gi] = (h.inv[gi] - target[gi] - 0.5).max(0.0).floor();
+                        sell[k][gi] = (h.inv[gi] - target[gi]).max(0.0).floor();
                     }
                     continue;
                 }
@@ -272,7 +412,9 @@ impl World {
             // moins quand c'est cher (plus du tout à deux fois et demie le prix habituel).
             // C'est ce qui fait venir le poisson de la côte dans les villages de l'intérieur.
             let protein = h.inv[Good::Meat as usize] + h.inv[Good::Fish as usize];
-            let want = members.len() as f32 * if fair { 3.0 } else { 2.0 } - protein;
+            let want = members.len() as f32
+                * (if fair { 3.0 } else { 2.0 } + if well_off { 1.5 } else { 0.0 })
+                - protein;
             if want > 0.5 {
                 for g in [Good::Meat, Good::Fish] {
                     let base = g.base_price();
@@ -301,6 +443,16 @@ impl World {
                 }
             } else {
                 food_need[k] = -surplus;
+            }
+        }
+
+        // On ne brade pas : quand le prix est bas, on ne met en vente qu'une partie de ce qu'on
+        // a en trop (tout, quand il dépasse d'un tiers le prix habituel).
+        for g in Good::ALL {
+            let gi = g as usize;
+            let share = withheld_share(price[gi] / g.base_price());
+            for row in sell.iter_mut() {
+                row[gi] *= share;
             }
         }
 
@@ -334,8 +486,8 @@ impl World {
                 .map(|&g| buy[k][g as usize] * price[g as usize])
                 .sum();
             let lack = cost - coins[k];
-            if lack > 0.0 && debt[k] < 40.0 {
-                let loan = lack.min(40.0 - debt[k]).min(treasury * 0.5).max(0.0);
+            if lack > 0.0 && debt[k] < ADVANCE_MAX {
+                let loan = lack.min(ADVANCE_MAX - debt[k]).min(treasury * 0.5).max(0.0);
                 coins[k] += loan;
                 debt[k] += loan;
                 treasury -= loan;
@@ -424,7 +576,7 @@ impl World {
         // Le village remplit son grenier commun (une semaine de vivres pour tous) avec sa caisse :
         // c'est lui qui nourrit les foyers qui n'ont plus rien.
         let pop = homes.iter().map(|(_, m)| m.len()).sum::<usize>() as f32;
-        let mut relief = (pop * 3.0 - self.villages[vi].stock.food).max(0.0);
+        let mut relief = (pop * RELIEF_DAYS - self.villages[vi].stock.food).max(0.0);
         let mut relief_got = 0.0;
         while relief > 0.01 && treasury > 0.01 {
             let cheapest = Good::FOODS
@@ -539,6 +691,12 @@ impl World {
     }
 }
 
+/// Part de son surplus qu'on met en vente, selon le prix rapporté au prix habituel : un
+/// cinquième au plancher, tout à partir d'un tiers au-dessus du prix habituel.
+fn withheld_share(ratio: f32) -> f32 {
+    (0.2 + 0.8 * (ratio - 0.3) / 1.0).clamp(0.2, 1.0)
+}
+
 // ------------------------------------------------------------------ qualité
 
 /// Répartit `traded` unités vendues entre les vendeurs, en priorité selon la qualité
@@ -622,7 +780,9 @@ impl World {
                 if need > 0.25 * full {
                     h.hungry_days += 1;
                     any_hungry = true;
-                    if h.hungry_days >= FAMINE_DAYS {
+                    // Une famille au plus s'en va chaque jour : les autres attendent encore un
+                    // peu les secours (le grenier, un marchand, un voisin).
+                    if h.hungry_days >= FAMINE_DAYS && leaving.is_empty() {
                         h.hungry_days = 0;
                         leaving.push(*hid);
                     }
@@ -720,12 +880,22 @@ impl World {
                 } else {
                     1.0
                 };
-                12.0 * p(Good::Grain) * season
+                // … et seulement pour qui a de la terre : trop de fermiers pour les champs du
+                // village, c'est autant de bras sans ouvrage.
+                let tick = self.tick;
+                let id = self.villages[vi].id;
+                let farmers = self
+                    .alive()
+                    .filter(|p| p.village == id && p.job == Some(Job::Farmer) && !p.elder(tick))
+                    .count() as f32;
+                let land = (self.villages[vi].fields.len() as f32 / (farmers + 1.0) / 2.5).min(1.0);
+                12.0 * p(Good::Grain) * season * land
             }
             Job::Woodcutter => 8.0 * p(Good::Wood),
             Job::Quarrier => 5.0 * p(Good::Stone),
-            Job::Fisher => 3.5 * p(Good::Fish),
-            Job::Hunter => 2.5 * p(Good::Meat),
+            // On sait ce que rapportent les bois et la rivière ces temps-ci.
+            Job::Fisher => 3.5 * p(Good::Fish) * self.land.wild(vi).fish,
+            Job::Hunter => 2.5 * p(Good::Meat) * self.land.wild(vi).game,
             Job::Miner => 4.0 * p(Good::Ore),
             Job::Miller => 20.0 * (p(Good::Flour) - p(Good::Grain)).max(0.0),
             Job::Baker => 15.0 * (1.1 * p(Good::Bread) - p(Good::Flour) - p(Good::Wood) / 6.0).max(0.0),
@@ -781,7 +951,7 @@ impl World {
                 Job::Quarrier => v.has_stone,
                 Job::Fisher => access[Good::Fish as usize],
                 Job::Hunter => access[Good::Meat as usize],
-                Job::Miner => access[Good::Ore as usize] && count(j) < 3,
+                Job::Miner => access[Good::Ore as usize] && count(j) < 2 + pop / 20,
                 Job::Miller => count(j) < shops(Workshop::Mill),
                 Job::Baker => count(j) < shops(Workshop::Bakery),
                 Job::Smith => count(j) < shops(Workshop::Smithy),
@@ -920,11 +1090,24 @@ impl World {
             return;
         }
         let ore = self.economy.access.get(vi).is_some_and(|a| a[Good::Ore as usize]);
+        let smithies = v
+            .houses
+            .iter()
+            .filter(|h| self.economy.workshops.get(&h.id) == Some(&Workshop::Smithy))
+            .count();
+        // Une forge de plus par trentaine d'habitants, tant que les outils restent chers.
+        let dear_tools = self
+            .economy
+            .markets
+            .get(vi)
+            .is_some_and(|m| m.price[Good::Tools as usize] > Good::Tools.base_price() * 1.3);
         let want = if !have(Workshop::Mill) && pop >= 12 {
             Some(Workshop::Mill)
         } else if built(Workshop::Mill) && !have(Workshop::Bakery) && pop >= 16 {
             Some(Workshop::Bakery)
-        } else if !have(Workshop::Smithy) && pop >= 20 && ore {
+        } else if (ore && pop >= 20 && smithies == 0)
+            || (dear_tools && (ore || pop >= 30) && smithies < (pop / PEOPLE_PER_SMITHY).max(1))
+        {
             Some(Workshop::Smithy)
         } else {
             None

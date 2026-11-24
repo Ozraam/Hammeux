@@ -134,6 +134,9 @@ impl World {
                 }
             }
             Step::Deposit => self.deposit(i, vi),
+            Step::Deliver => self.deliver(i, vi),
+            Step::DeliverTo(h) => self.deliver_to(i, h),
+            Step::Reap(fid) => self.bring_harvest(i, vi, fid),
             Step::Build(hid) => {
                 let b = &mut self.people[i].brain;
                 let (carry, amount) = (b.carry.take(), b.carry_amount as u32);
@@ -187,7 +190,15 @@ impl World {
                     Good::Ore => 1.5,
                     _ => 1.0,
                 };
-                let amount = base * self.work_bonus(i);
+                // Le gibier et le poisson s'épuisent quand on en prend trop.
+                let wild = matches!(good, Good::Fish | Good::Meat).then(|| {
+                    let w = self.land.wild(vi);
+                    if good == Good::Fish { w.fish } else { w.game }
+                });
+                let amount = base * self.work_bonus(i) * wild.unwrap_or(1.0);
+                if wild.is_some() {
+                    self.land.wild_mut(vi).take(good == Good::Fish, amount);
+                }
                 let b = &mut self.people[i].brain;
                 b.carry = Some(Carry::Good(good));
                 b.carry_amount = amount;
@@ -235,11 +246,36 @@ impl World {
 
     fn field_work(&mut self, i: usize, vi: usize, fid: u32) {
         let season = self.clock().season;
+        // Journalier sur le champ d'un autre foyer (hors moisson, où il garde sa part) : payé.
+        let owner = self.land.soil(fid).owner;
+        let ripe = self.villages[vi]
+            .fields
+            .iter()
+            .any(|f| f.id == fid && f.state == FieldState::Ripe);
+        if !ripe
+            && let (Some(o), Some(home)) = (owner, self.people[i].home)
+            && o != home
+            && self.people[i].job != Some(Job::Farmer)
+            && let Some(boss) = self.economy.households.get_mut(&o)
+        {
+            let pay = crate::land::FARMHAND_WAGE.min(boss.coins);
+            boss.coins -= pay;
+            self.economy.household(home).coins += pay;
+            if let Some(job) = self.people[i].job {
+                self.economy.ensure_village(vi);
+                self.economy.today[vi][job as usize] += pay;
+            }
+        }
+        let rotation = self.society.knows(self.people[i].village, Tech::Rotation);
+        let year = self.land.year(vi).harvest;
         let Some(f) = self.villages[vi].field_mut(fid) else {
             return;
         };
+        let soil = self.land.soil_mut(fid);
         match f.state {
-            FieldState::Fallow if season != Season::Winter => {
+            // À l'automne et l'hiver, on fume les champs moissonnés.
+            FieldState::Fallow if matches!(season, Season::Autumn | Season::Winter) => soil.manure(),
+            FieldState::Fallow => {
                 f.work += FIELD_WORK_PER_SESSION;
                 if f.work >= 1.0 {
                     f.state = FieldState::Ploughed;
@@ -252,16 +288,43 @@ impl World {
                     f.state = FieldState::Sown;
                     f.work = 0.0;
                     f.growth = 0.0;
+                    soil.weeds = 0.0;
+                    // La semence : prise au foyer qui cultive le champ, sinon au grenier commun.
+                    let seed = crate::land::SEED;
+                    let from_home = soil
+                        .owner
+                        .and_then(|o| self.economy.households.get_mut(&o))
+                        .map_or(0.0, |h| {
+                            let g = &mut h.inv[Good::Grain as usize];
+                            let take = g.min(seed);
+                            *g -= take;
+                            take
+                        });
+                    let st = &mut self.villages[vi].stock;
+                    let rest = ((seed - from_home) * Good::Grain.ration()).min(st.food);
+                    st.food -= rest;
+                    soil.thin = from_home + rest / Good::Grain.ration() < seed * 0.5;
                 }
             }
+            // Sarclage : les mauvaises herbes étouffent la récolte.
+            FieldState::Sown => soil.weeds = (soil.weeds - crate::land::WEEDING).max(0.0),
             FieldState::Ripe => {
                 let part = FIELD_WORK_PER_SESSION.min(1.0 - f.work);
-                let amount = FIELD_YIELD * (0.35 + f.fertility) * part;
+                let amount = FIELD_YIELD * (0.35 + f.fertility) * part * soil.yield_factor() * year;
                 f.work += part;
                 if f.work >= 0.999 {
                     f.state = FieldState::Fallow;
                     f.work = 0.0;
                     f.growth = 0.0;
+                    // La moisson épuise la terre (moins quand on sait alterner les cultures).
+                    let drain = if rotation {
+                        crate::land::HARVEST_DRAIN_ROTATION
+                    } else {
+                        crate::land::HARVEST_DRAIN
+                    };
+                    soil.richness = (soil.richness - drain).max(crate::land::SOIL_MIN);
+                    soil.weeds = 0.0;
+                    soil.thin = false;
                 }
                 let amount = amount * self.work_bonus(i) * self.tech_bonus(i, Tech::Rotation, 1.25);
                 let b = &mut self.people[i].brain;
@@ -698,9 +761,9 @@ impl World {
         let vi = self.village_of(i);
         let v = &self.villages[vi];
         match act {
-            Act::Ploughing | Act::Sowing | Act::Tending | Act::Harvesting => {
+            Act::Ploughing | Act::Sowing | Act::Tending | Act::Harvesting | Act::Manuring => {
                 let want = match act {
-                    Act::Ploughing => FieldState::Fallow,
+                    Act::Ploughing | Act::Manuring => FieldState::Fallow,
                     Act::Sowing => FieldState::Ploughed,
                     Act::Tending => FieldState::Sown,
                     _ => FieldState::Ripe,
@@ -823,8 +886,12 @@ impl World {
             _ => false,
         };
         if !done {
-            // Rien à faire dans son métier : on aide aux champs, sinon on coupe du bois.
-            let ok = self.farm(i, vi) || (!glut(self, Good::Wood) && self.gather(i, vi, Good::Wood));
+            // Rien à faire dans son métier (morte-saison, stocks qui débordent, pas de
+            // matières) : on aide aux champs, on se loue à la journée pour le village, sinon on
+            // coupe du bois pour chez soi.
+            let ok = self.farm(i, vi)
+                || self.odd_job(i, vi)
+                || (stock_of(self, Good::Wood) < 30.0 && self.gather(i, vi, Good::Wood));
             if !ok {
                 self.leisure(i);
             }
@@ -876,8 +943,53 @@ impl World {
         best.map(|(_, t, s)| (t, s))
     }
 
+    /// Travail à la journée, payé par la caisse du village : porter les matériaux du grenier
+    /// aux chantiers, ou rapporter du bois et de la pierre quand le grenier en manque. Faux si
+    /// rien n'attend ou si la caisse ne peut pas payer.
+    fn odd_job(&mut self, i: usize, vi: usize) -> bool {
+        if !self.can_hire(vi) {
+            // La caisse est vide : un foyer aisé loue peut-être des bras pour son bois.
+            return match self.employer(vi, i) {
+                Some(h) => self.gather_to(i, vi, Good::Wood, Step::DeliverTo(h)),
+                None => false,
+            };
+        }
+        if self.build(i, vi) {
+            return true;
+        }
+        let v = &self.villages[vi];
+        let sites: Vec<_> = v
+            .houses
+            .iter()
+            .filter(|h| h.state == HouseState::Building)
+            .collect();
+        let wood: u32 = sites.iter().map(|h| h.wood_needed).sum();
+        let stone: u32 = sites.iter().map(|h| h.stone_needed).sum();
+        // Une caisse bien garnie fait aussi des réserves pour les chantiers à venir.
+        let (wood_reserve, stone_reserve) = if self.treasury_full(vi) { (80, 40) } else { (20, 6) };
+        let g = if v.has_stone && v.stock.stone < stone.max(stone_reserve) {
+            Good::Stone
+        } else if v.stock.wood < wood.max(wood_reserve) {
+            Good::Wood
+        } else {
+            return false;
+        };
+        self.gather_for(i, vi, g, true)
+    }
+
     /// Va chercher une ressource et la rapporte au marché. Faux si rien n'est à portée.
     fn gather(&mut self, i: usize, vi: usize, r: Good) -> bool {
+        self.gather_for(i, vi, r, false)
+    }
+
+    /// … pour son foyer, ou pour le village (`public` : déposé au grenier commun, payé).
+    fn gather_for(&mut self, i: usize, vi: usize, r: Good, public: bool) -> bool {
+        let end = if public { Step::Deliver } else { Step::Deposit };
+        self.gather_to(i, vi, r, end)
+    }
+
+    /// … et ce qu'on fait de ce qu'on rapporte (`end` : la dernière étape).
+    fn gather_to(&mut self, i: usize, vi: usize, r: Good, end: Step) -> bool {
         let Some((res, stand)) = self.find_resource(vi, r) else {
             return false;
         };
@@ -898,7 +1010,7 @@ impl World {
                 Self::wait(session, act),
                 Step::Gather(res, r),
                 Step::Go(door),
-                Step::Deposit,
+                end,
             ],
         );
         true
@@ -907,12 +1019,28 @@ impl World {
     /// Travail à l'atelier de son métier (moulin, four, forge). Faux s'il n'existe pas encore.
     fn workshop_work(&mut self, i: usize, vi: usize, kind: Workshop) -> bool {
         let v = &self.villages[vi];
-        let shop = v
+        // Plusieurs ateliers du même genre : chacun a le sien.
+        let shops: Vec<_> = v
             .houses
             .iter()
-            .find(|h| h.state == HouseState::Inhabited && self.economy.workshops.get(&h.id) == Some(&kind));
-        let Some(h) = shop else { return false };
+            .filter(|h| h.state == HouseState::Inhabited && self.economy.workshops.get(&h.id) == Some(&kind))
+            .collect();
+        if shops.is_empty() {
+            return false;
+        }
+        let h = shops[self.people[i].id as usize % shops.len()];
         let (wid, tile) = (h.id, self.map.idx(h.x, h.y) as u32);
+        // Sans matières, inutile d'aller à l'atelier : on trouvera autre chose à faire.
+        let input = |g: Good| self.home_household(i).map_or(0.0, |hh| hh.inv[g as usize]);
+        let stocked = match kind {
+            Workshop::Mill => input(Good::Grain) >= 1.0,
+            Workshop::Bakery => input(Good::Flour) >= 1.0 && input(Good::Wood) >= 0.2,
+            Workshop::Smithy => input(Good::Ore) >= 1.0 && input(Good::Wood) >= 1.0,
+            Workshop::Temple => false,
+        };
+        if !stocked {
+            return false;
+        }
         // Personne n'achète ce qu'on a déjà produit : inutile d'en faire plus.
         let output = match kind {
             Workshop::Mill => Good::Flour,
@@ -920,7 +1048,7 @@ impl World {
             Workshop::Smithy => Good::Tools,
             Workshop::Temple => return false,
         };
-        let limit = if kind == Workshop::Smithy { 6.0 } else { 60.0 };
+        let limit = if kind == Workshop::Smithy { 12.0 } else { 60.0 };
         if self
             .home_household(i)
             .is_some_and(|h| h.inv[output as usize] > limit)
@@ -982,43 +1110,74 @@ impl World {
     }
 
     /// Travail aux champs selon la saison. Faux s'il n'y a rien à faire.
+    ///
+    /// Une seule récolte par an (semis au printemps), mais les champs demandent du travail
+    /// toute l'année : labour et semis au printemps, sarclage tant qu'ils poussent, moisson,
+    /// puis fumure à l'automne et l'hiver.
     fn farm(&mut self, i: usize, vi: usize) -> bool {
         let season = self.clock().season;
+        let land = &self.land;
+        let home = self.people[i].home;
+        let farmer = self.people[i].job == Some(Job::Farmer);
+        // Ses propres champs d'abord ; un fermier aide ensuite les autres, les autres
+        // habitants ne viennent que moissonner (ils gardent leur part) ou travailler les
+        // champs du village (qui ne sont à personne).
+        let mine = self.villages[vi]
+            .fields
+            .iter()
+            .any(|f| land.soil(f.id).owner.is_some() && land.soil(f.id).owner == home);
         let fields: Vec<(u32, FieldState, u32, u32)> = self.villages[vi]
             .fields
             .iter()
+            .filter(|f| {
+                let soil = land.soil(f.id);
+                let own = soil.owner.is_some() && soil.owner == home;
+                if mine && !own && f.state != FieldState::Ripe && soil.owner.is_some() {
+                    return false;
+                }
+                // Hors moisson, on ne travaille le champ d'un autre que s'il peut payer la journée.
+                let pays = soil
+                    .owner
+                    .and_then(|o| self.economy.households.get(&o))
+                    .is_some_and(|h| h.coins >= crate::land::FARMHAND_MIN_COINS);
+                if !farmer && !own && soil.owner.is_some() && f.state != FieldState::Ripe && !pays {
+                    return false;
+                }
+                match f.state {
+                    FieldState::Sown => soil.weeds > 0.12,
+                    FieldState::Fallow if matches!(season, Season::Autumn | Season::Winter) => {
+                        soil.wants_manure()
+                    }
+                    _ => true,
+                }
+            })
             .map(|f| (f.id, f.state, f.x, f.y))
             .collect();
         let pick = |want: &[FieldState]| -> Vec<(u32, FieldState, u32, u32)> {
             fields.iter().copied().filter(|f| want.contains(&f.1)).collect()
         };
+        let first = |lists: &[&[FieldState]]| {
+            lists
+                .iter()
+                .map(|l| pick(l))
+                .find(|l| !l.is_empty())
+                .unwrap_or_default()
+        };
         let todo = match season {
-            Season::Winter => Vec::new(),
-            // Une seule récolte par an : on laboure et sème au printemps.
-            Season::Spring => {
-                let ripe = pick(&[FieldState::Ripe]);
-                if ripe.is_empty() {
-                    pick(&[FieldState::Fallow, FieldState::Ploughed])
-                } else {
-                    ripe
-                }
-            }
-            Season::Summer => {
-                let ripe = pick(&[FieldState::Ripe]);
-                if !ripe.is_empty() {
-                    ripe
-                } else if self.rng.chance(0.3) {
-                    pick(&[FieldState::Sown])
-                } else {
-                    Vec::new()
-                }
-            }
-            Season::Autumn => pick(&[FieldState::Ripe]),
+            Season::Winter => pick(&[FieldState::Fallow]),
+            Season::Spring => first(&[
+                &[FieldState::Ripe],
+                &[FieldState::Fallow, FieldState::Ploughed],
+                &[FieldState::Sown],
+            ]),
+            Season::Summer => first(&[&[FieldState::Ripe], &[FieldState::Sown]]),
+            Season::Autumn => first(&[&[FieldState::Ripe], &[FieldState::Sown], &[FieldState::Fallow]]),
         };
         let Some(&(fid, state, fx, fy)) = self.rng.pick(&todo) else {
             return false;
         };
         let act = match state {
+            FieldState::Fallow if matches!(season, Season::Autumn | Season::Winter) => Act::Manuring,
             FieldState::Fallow => Act::Ploughing,
             FieldState::Ploughed => Act::Sowing,
             FieldState::Sown => Act::Tending,
@@ -1043,7 +1202,7 @@ impl World {
         if state == FieldState::Ripe {
             let door = self.villages[vi].door();
             let door = self.map.idx(door.0, door.1) as u32;
-            self.plan(i, [Step::Go(door), Step::Deposit]);
+            self.plan(i, [Step::Go(door), Step::Reap(fid)]);
         }
         true
     }

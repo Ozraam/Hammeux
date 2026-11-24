@@ -412,7 +412,9 @@ impl World {
             .iter()
             .filter(|h| h.state == HouseState::Building)
             .count();
-        let attractive = pop < 8 || food > pop as f32 * 25.0;
+        // (Chaque foyer ne garde guère plus d'une semaine de vivres : un village où l'on mange
+        // à sa faim, avec deux semaines de réserves en tout, attire.)
+        let attractive = pop < 8 || (food > pop as f32 * 14.0 && self.villages[vi].hungry_days == 0);
         if attractive
             && sites == 0
             && self.rng.chance(IMMIGRATION_PER_DAY / 144.0)
@@ -429,8 +431,13 @@ impl World {
             self.plan_workshops(vi);
         }
 
-        // Champs : assez pour nourrir tout le monde.
-        let target = (pop as f32 * FIELDS_PER_PERSON).ceil() as usize + 1;
+        // Champs : assez pour nourrir tout le monde, et pour que chaque fermier ait sa terre
+        // (tant qu'il en reste à défricher près du village, et que le grain se vend).
+        let farmers = self
+            .alive()
+            .filter(|p| p.village == id && p.job == Some(crate::people::Job::Farmer) && !p.elder(tick))
+            .count();
+        let target = ((pop as f32 * FIELDS_PER_PERSON).ceil() as usize + 1).max(farmers * 3 / 2);
         // … tant que le grain se vend (s'il ne vaut plus rien, inutile de défricher).
         let grain_sells = self.economy.markets.get(vi).is_none_or(|m| {
             m.price[crate::economy::Good::Grain as usize] >= crate::economy::Good::Grain.base_price() * 0.6

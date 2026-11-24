@@ -121,6 +121,8 @@ pub enum Act {
     Ill,
     // Phase 8.
     Praying,
+    // Phase 9.
+    Manuring,
 }
 
 impl Act {
@@ -154,6 +156,7 @@ impl Act {
             Act::Trading => "attend le marché",
             Act::Feasting => "fait la fête",
             Act::Praying => "prie le Ciel",
+            Act::Manuring => "fume un champ",
             Act::Ill => "est malade, alité",
         }
     }
@@ -182,6 +185,13 @@ pub enum Step {
     Take(Good),
     /// Déposer au marché, dans les réserves de son foyer, ce qu'on porte.
     Deposit,
+    /// Rapporter la moisson d'un champ : à son foyer, au grenier commun s'il n'est à personne
+    /// (celui qui aide garde sa part).
+    Reap(u32),
+    /// Déposer au grenier commun ce qu'on rapporte pour le village (travail payé à la journée).
+    Deliver,
+    /// Livrer ce qu'on porte au foyer qui nous a loué pour la journée (et être payé).
+    DeliverTo(u32),
     Build(u32),
     FieldWork(u32),
     /// Récolter une ressource naturelle (bois, pierre, poisson, gibier, minerai).

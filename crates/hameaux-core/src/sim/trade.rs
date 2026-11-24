@@ -20,8 +20,12 @@ type Cargo = Option<(Good, f32)>;
 
 /// Taxe du marché (la même que dans `market.rs`).
 const TAX: f32 = 0.10;
-/// Bénéfice attendu (sous) en dessous duquel un marchand ne part pas.
+/// Bénéfice attendu (sous, frais de route déduits) en dessous duquel un marchand ne part pas.
 const MIN_PROFIT: f32 = 4.0;
+/// Une nuit à l'auberge (payée à la caisse du village qui l'accueille), en plus du repas.
+const INN: f32 = 1.0;
+/// Usure de la charrette et du cheval, par voyage.
+const CART_WEAR: f32 = 0.8;
 /// Population à partir de laquelle un village essaime.
 const COLONY_POP: usize = 60;
 /// Villages au plus sur la carte.
@@ -139,7 +143,7 @@ impl World {
                 best = best.max(2.5);
                 continue;
             };
-            best = best.max(self.plan_trip(vi, j, n, 50.0).0 / 2.0);
+            best = best.max((self.plan_trip(vi, j, n, 50.0).0 - self.road_cost(j, 1)) / 2.0);
         }
         best
     }
@@ -238,7 +242,9 @@ impl World {
                     if self.tick.saturating_sub(n.tick) > 14 * DAY {
                         unknown.get_or_insert(j);
                     }
-                    let (mut profit, want) = self.plan_trip(vi, j, &n, capital);
+                    let (profit, want) = self.plan_trip(vi, j, &n, capital);
+                    // Ce que coûte la route : l'auberge, les repas, l'usure de la charrette.
+                    let mut profit = profit - self.road_cost(j, 1);
                     // Une foire s'y ouvre : on y vendra bien, on y apprendra beaucoup.
                     if self.fair_soon(other) {
                         profit = profit.max(MIN_PROFIT) + 12.0;
@@ -249,10 +255,13 @@ impl World {
                 }
             }
         }
-        // Sans argent, on peut encore aller voir un village inconnu (et en rapporter des nouvelles).
+        // Rien de rentable : on peut encore aller voir un village inconnu (et en rapporter des
+        // nouvelles), mais la route coûte : les curieux et les audacieux seuls s'y risquent.
+        let t = self.people[i].mind.traits;
+        let venture = 0.15 + 0.25 * t.openness + 0.2 * t.risk;
         let (dest, want) = match (best, unknown) {
             (Some((_, j, want)), _) if capital >= 3.0 => (j, want),
-            (_, Some(j)) => (j, None),
+            (_, Some(j)) if self.rng.chance(venture) => (j, None),
             _ => return false,
         };
         let loan = if want.is_some() { loan } else { 0.0 };
@@ -487,10 +496,25 @@ impl World {
         };
         let price = self.economy.markets[vi].price;
         let worth: f32 = (0..GOODS).map(|g| t.cargo[g] * price[g] * (1.0 - TAX)).sum();
+        // Les frais de route : chaque nuit à l'auberge (et ses repas) est payée au village
+        // d'accueil ; l'usure de la charrette est perdue.
+        let (cost, inn) = match self.village_index(t.dest) {
+            Some(dv) if travelled => {
+                let nights = 1 + t.waited as u32;
+                (self.road_cost(dv, nights), self.road_cost(dv, nights) - CART_WEAR)
+            }
+            _ => (0.0, 0.0),
+        };
+        if let Some(dv) = self.village_index(t.dest).filter(|_| inn > 0.0) {
+            self.economy.ensure_village(dv);
+            self.economy.treasury[dv] += inn;
+        }
+        let mut t = t;
+        t.purse -= cost;
         let profit = t.purse + worth - t.capital;
         if let Some(h) = self.people[i].home {
             let hh = self.economy.household(h);
-            hh.coins += t.purse;
+            hh.coins = (hh.coins + t.purse).max(0.0);
             for g in 0..GOODS {
                 hh.inv[g] += t.cargo[g];
             }
@@ -534,6 +558,18 @@ impl World {
             let village = p.village;
             self.event(Some(village), vec![id], text);
         }
+    }
+
+    /// Frais d'un voyage vers ce village pour tant de nuits là-bas : l'auberge, un repas par
+    /// jour au prix de la nourriture la moins chère, l'usure de la charrette.
+    pub(super) fn road_cost(&self, dest: usize, nights: u32) -> f32 {
+        let meal = self.economy.markets.get(dest).map_or(1.0, |m| {
+            Good::FOODS
+                .iter()
+                .map(|&g| m.price[g as usize] / g.ration())
+                .fold(f32::MAX, f32::min)
+        });
+        nights as f32 * (INN + 2.0 * meal) + CART_WEAR
     }
 
     /// Marchands de passage qui vendent à ce marché (identifiant, cargaison).
@@ -1122,13 +1158,14 @@ mod tests {
             .map(|h| h.id)
             .find(|&h| h != home)
             .unwrap();
-        // (Un foyer vend d'abord ce qu'il aime le moins : sans grain, il vend son poisson.)
+        // (Un foyer vend d'abord ce qu'il aime le moins : sans grain, il vend son poisson. Au
+        // prix habituel, il en met en vente la plus grande part : on ne brade qu'au plancher.)
         w.economy.household(other).inv = [0.0; crate::economy::GOODS];
         w.economy.household(other).inv[fish] = 200.0;
-        w.economy.markets[0].price[fish] = 0.3;
+        w.economy.markets[0].price[fish] = 0.8;
         w.economy.markets[0].supply[fish] = 150.0;
         let mut dear = w.economy.markets[1].clone();
-        dear.price[fish] = 1.8;
+        dear.price[fish] = 2.0;
         dear.demand[fish] = 40.0;
         w.economy.markets[1] = dear.clone();
         w.trade.hear(0, 1, &PriceNews::of(tick, &dear));

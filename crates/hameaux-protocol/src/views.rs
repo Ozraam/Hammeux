@@ -63,6 +63,10 @@ pub struct FieldView {
     pub state: u8,
     pub growth: f32,
     pub work: f32,
+    /// Richesse du sol (1 : terre neuve ; moins après les moissons, plus avec la fumure).
+    pub soil: f32,
+    /// Mauvaises herbes, 0–1.
+    pub weeds: f32,
 }
 
 /// Grenier et puits d'un village.
@@ -168,6 +172,8 @@ impl Scene {
                     },
                     growth: f.growth,
                     work: f.work,
+                    soil: world.land.soil(f.id).richness,
+                    weeds: world.land.soil(f.id).weeds,
                 });
             }
         }
@@ -345,6 +351,10 @@ pub struct HouseholdView {
     pub food_days: f32,
     pub goods: Vec<GoodAmount>,
     pub hungry: bool,
+    /// Champs que cultive ce foyer.
+    pub fields: u32,
+    /// Ce qu'il doit encore à la caisse du village (avances).
+    pub debt: f32,
 }
 
 fn goods_list(inv: &hameaux_core::economy::Inv) -> Vec<GoodAmount> {
@@ -652,6 +662,15 @@ impl PersonSheet {
                     food_days: h.rations() / members as f32,
                     goods: goods_list(&h.inv),
                     hungry: h.hungry_days > 0,
+                    fields: p.home.map_or(0, |home| {
+                        village.map_or(0, |v| {
+                            v.fields
+                                .iter()
+                                .filter(|f| world.land.soil(f.id).owner == Some(home))
+                                .count() as u32
+                        })
+                    }),
+                    debt: h.debt,
                 }
             }),
             office: world
@@ -754,6 +773,8 @@ pub struct VillageSheet {
     pub next_election: String,
     /// Techniques connues, avec leur origine.
     pub techs: Vec<TechView>,
+    /// Terres, gibier et poisson, année, taille et aumônes, argent des foyers (phase 9).
+    pub land: LandView,
     /// Malades en ce moment.
     pub sick: u32,
     /// « épidémie de fièvre (2 morts) ».
@@ -763,6 +784,82 @@ pub struct VillageSheet {
     /// Religion et effets du Ciel en cours.
     pub cult: Option<crate::CultView>,
     pub events: Vec<EventView>,
+}
+
+/// Ce qui fait la tension économique d'un village.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct LandView {
+    /// Richesse moyenne du sol des champs (1 : terre neuve).
+    pub soil: f32,
+    /// Champs épuisés (sol sous 0,6).
+    pub worn: u32,
+    /// Champs cultivés par un foyer (les autres nourrissent le grenier commun).
+    pub owned: u32,
+    /// Gibier et poisson autour du village, 0–1.
+    pub game: f32,
+    pub fish: f32,
+    /// « la récolte s'annonce maigre », « année ordinaire »…
+    pub year: String,
+    /// Taille levée et aumônes faites depuis le printemps (sous).
+    pub levied: f32,
+    pub alms: f32,
+    /// Argent des foyers : le quart le plus pauvre, la médiane, le dixième le plus riche (en
+    /// moyenne par foyer).
+    pub coins_poor: f32,
+    pub coins_median: f32,
+    pub coins_rich: f32,
+    pub smithies: u32,
+}
+
+fn land_view(world: &World, vi: usize) -> LandView {
+    let v = &world.villages[vi];
+    let soils: Vec<_> = v.fields.iter().map(|f| world.land.soil(f.id)).collect();
+    let n = soils.len().max(1) as f32;
+    let wild = world.land.wild(vi);
+    let year = world.land.year(vi);
+    let mut coins: Vec<f32> = v
+        .houses
+        .iter()
+        .filter(|h| h.state == HouseState::Inhabited && !h.residents.is_empty())
+        .filter_map(|h| world.economy.households.get(&h.id))
+        .map(|h| h.coins.max(0.0))
+        .collect();
+    coins.sort_by(f32::total_cmp);
+    let mean = |s: &[f32]| {
+        if s.is_empty() {
+            0.0
+        } else {
+            s.iter().sum::<f32>() / s.len() as f32
+        }
+    };
+    LandView {
+        soil: soils.iter().map(|s| s.richness).sum::<f32>() / n,
+        worn: soils.iter().filter(|s| s.richness < 0.6).count() as u32,
+        owned: soils.iter().filter(|s| s.owner.is_some()).count() as u32,
+        game: wild.game,
+        fish: wild.fish,
+        year: if year.harvest < 0.82 {
+            "la récolte s'annonce maigre".into()
+        } else if year.harvest > 1.1 {
+            "la récolte s'annonce belle".into()
+        } else {
+            "année ordinaire".into()
+        },
+        levied: year.levied,
+        alms: year.alms,
+        coins_poor: mean(&coins[..coins.len() / 4]),
+        coins_median: coins.get(coins.len() / 2).copied().unwrap_or(0.0),
+        coins_rich: mean(&coins[coins.len() - coins.len().div_ceil(10)..]),
+        smithies: v
+            .houses
+            .iter()
+            .filter(|h| {
+                h.state == HouseState::Inhabited
+                    && world.economy.workshops.get(&h.id) == Some(&hameaux_core::economy::Workshop::Smithy)
+            })
+            .count() as u32,
+    }
 }
 
 /// Une technique connue d'un village.
@@ -997,6 +1094,7 @@ impl VillageSheet {
                 }
                 None => "pas encore de chef".to_string(),
             },
+            land: land_view(world, vi),
             techs: polity
                 .map(|p| {
                     p.techs

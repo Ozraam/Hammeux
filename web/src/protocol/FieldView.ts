@@ -4,4 +4,12 @@ export type FieldView = { id: number, x: number, y: number, size: number,
 /**
  * 0 friche, 1 labouré, 2 semé, 3 mûr.
  */
-state: number, growth: number, work: number, };
+state: number, growth: number, work: number, 
+/**
+ * Richesse du sol (1 : terre neuve ; moins après les moissons, plus avec la fumure).
+ */
+soil: number, 
+/**
+ * Mauvaises herbes, 0–1.
+ */
+weeds: number, };

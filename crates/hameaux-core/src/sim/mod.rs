@@ -7,6 +7,7 @@
 mod found;
 mod god;
 mod history;
+mod land;
 mod life;
 mod market;
 mod mind;
@@ -73,6 +74,7 @@ impl World {
                     self.daily_trade();
                     self.daily_society();
                     self.daily_god();
+                    self.daily_land();
                     self.record_history();
                 }
                 _ => {}
