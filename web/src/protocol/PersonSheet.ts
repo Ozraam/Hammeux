@@ -6,6 +6,7 @@ import type { MemoryView } from "./MemoryView";
 import type { NeedView } from "./NeedView";
 import type { PersonRef } from "./PersonRef";
 import type { SkillView } from "./SkillView";
+import type { TraitView } from "./TraitView";
 
 export type PersonSheet = { id: number, name: string, female: boolean, age: number, 
 /**
@@ -32,6 +33,10 @@ relations: Array<PersonRef>,
  * Traits de caractère les plus marqués (« curieuse », « bourru »…).
  */
 traits: Array<string>, 
+/**
+ * Les dix traits et valeurs, chacun entre ses deux pôles.
+ */
+personality: Array<TraitView>, 
 /**
  * Humeur (« joyeux », « triste », « fâchée »…).
  */

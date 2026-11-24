@@ -206,7 +206,7 @@ pub struct PersonRef {
     pub note: String,
 }
 
-fn person_ref(world: &World, id: u32, note: impl Into<String>) -> PersonRef {
+pub(crate) fn person_ref(world: &World, id: u32, note: impl Into<String>) -> PersonRef {
     let p = &world.people[id as usize];
     PersonRef {
         id,
@@ -243,6 +243,8 @@ pub struct PersonSheet {
     pub relations: Vec<PersonRef>,
     /// Traits de caractère les plus marqués (« curieuse », « bourru »…).
     pub traits: Vec<String>,
+    /// Les dix traits et valeurs, chacun entre ses deux pôles.
+    pub personality: Vec<TraitView>,
     /// Humeur (« joyeux », « triste », « fâchée »…).
     pub mood: String,
     /// Humeur de -1 à 1 (pour la couleur).
@@ -266,6 +268,15 @@ pub struct PersonSheet {
     /// Condamnations par le chef.
     pub convictions: u32,
     pub events: Vec<EventView>,
+}
+
+/// Un trait de caractère : 0 = tout à fait `low`, 1 = tout à fait `high`.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct TraitView {
+    pub high: String,
+    pub low: String,
+    pub value: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -595,6 +606,17 @@ impl PersonSheet {
             family,
             relations,
             traits: m.traits.describe(p.female),
+            personality: m
+                .traits
+                .to_array()
+                .iter()
+                .zip(hameaux_core::mind::TRAIT_LABELS)
+                .map(|(&value, (high, low))| TraitView {
+                    high: feminine(high, p.female),
+                    low: feminine(low, p.female),
+                    value,
+                })
+                .collect(),
             mood: feminine(m.mood_label(), p.female),
             mood_value: m.mood.valence() + 0.5 * (m.needs.wellbeing() - 0.7),
             needs,
@@ -1021,6 +1043,8 @@ pub struct EventView {
     pub village_name: Option<String>,
     pub people: Vec<u32>,
     pub text: String,
+    /// Sorte d'événement (index dans `MapInfo::event_kinds`).
+    pub kind: u8,
 }
 
 impl EventView {
@@ -1044,6 +1068,7 @@ impl EventView {
                 .map(|vi| world.villages[vi].name.clone()),
             people: e.people.clone(),
             text: e.text.clone(),
+            kind: hameaux_core::history::Kind::of(&e.text) as u8,
         }
     }
 }

@@ -17,8 +17,8 @@ use axum::{
     routing::{get, post},
 };
 use hameaux_protocol::{
-    ClientMsg, ClockView, EventView, Health, MapChanges, MapInfo, PersonSheet, Scene, ServerMsg,
-    VillageSheet, VillageView, encode_chunk,
+    ChronicleQuery, ClientMsg, ClockView, EventPage, EventView, FamilyTree, Health, HistoryView, MapChanges,
+    MapInfo, PersonSheet, Scene, ServerMsg, Summary, TradeMap, VillageSheet, VillageView, encode_chunk,
 };
 use serde::Deserialize;
 use tokio::sync::{oneshot, watch};
@@ -50,6 +50,12 @@ pub fn router(state: AppState, web_dir: &Path) -> Router {
         .route("/api/events", get(events))
         .route("/api/person/{id}", get(person))
         .route("/api/village/{id}", get(village))
+        .route("/api/village/{id}/history", get(village_history))
+        .route("/api/world/history", get(world_history))
+        .route("/api/tree/{id}", get(tree))
+        .route("/api/trade", get(trade))
+        .route("/api/chronicle", get(chronicle))
+        .route("/api/summary", get(summary))
         .route("/api/admin/pause", post(pause))
         .route("/api/admin/resume", post(resume))
         .route("/api/admin/speed", post(speed))
@@ -247,6 +253,57 @@ async fn village(State(s): State<AppState>, AxumPath(id): AxumPath<u32>) -> Resp
         Some(sheet) => Json(sheet).into_response(),
         None => (StatusCode::NOT_FOUND, "village inconnu").into_response(),
     }
+}
+
+#[derive(Deserialize)]
+struct HistoryQuery {
+    /// Toute l'histoire (un relevé par semaine) plutôt que les derniers jours.
+    all: Option<bool>,
+}
+
+async fn village_history(
+    State(s): State<AppState>,
+    AxumPath(id): AxumPath<u32>,
+    Query(q): Query<HistoryQuery>,
+) -> Response {
+    let snap = s.snapshots.borrow().clone();
+    match HistoryView::village(&snap.world, id, q.all.unwrap_or(false)) {
+        Some(h) => Json(h).into_response(),
+        None => (StatusCode::NOT_FOUND, "village inconnu").into_response(),
+    }
+}
+
+async fn world_history(State(s): State<AppState>, Query(q): Query<HistoryQuery>) -> Json<HistoryView> {
+    let snap = s.snapshots.borrow().clone();
+    Json(HistoryView::world(&snap.world, q.all.unwrap_or(false)))
+}
+
+async fn tree(State(s): State<AppState>, AxumPath(id): AxumPath<u32>) -> Response {
+    let snap = s.snapshots.borrow().clone();
+    match FamilyTree::of(&snap.world, id) {
+        Some(t) => Json(t).into_response(),
+        None => (StatusCode::NOT_FOUND, "habitant inconnu").into_response(),
+    }
+}
+
+async fn trade(State(s): State<AppState>) -> Json<TradeMap> {
+    let snap = s.snapshots.borrow().clone();
+    Json(TradeMap::of(&snap.world))
+}
+
+async fn chronicle(State(s): State<AppState>, Query(q): Query<ChronicleQuery>) -> Json<EventPage> {
+    let snap = s.snapshots.borrow().clone();
+    Json(EventPage::of(&snap.world, &q))
+}
+
+#[derive(Deserialize)]
+struct SummaryQuery {
+    since: u64,
+}
+
+async fn summary(State(s): State<AppState>, Query(q): Query<SummaryQuery>) -> Json<Summary> {
+    let snap = s.snapshots.borrow().clone();
+    Json(Summary::since(&snap.world, q.since))
 }
 
 #[derive(Deserialize)]

@@ -5,7 +5,9 @@
 
 use hameaux_core::{Biome, Clock, Map, Resource, World, map::CHUNK, settlement::Village};
 
+mod pages;
 mod views;
+pub use pages::*;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 pub use views::*;
@@ -168,6 +170,10 @@ pub struct MapInfo {
     pub biomes: Vec<Labeled>,
     pub resources: Vec<Labeled>,
     pub villages: Vec<VillageView>,
+    /// Sortes d'événements de la chronique (filtres).
+    pub event_kinds: Vec<Labeled>,
+    /// Biens (index des tableaux par bien : prix, stocks…).
+    pub goods: Vec<Labeled>,
 }
 
 /// Couches envoyées pour chaque tronçon, dans cet ordre.
@@ -199,6 +205,20 @@ impl MapInfo {
                 })
                 .collect(),
             villages: world.villages.iter().map(|v| VillageView::of(world, v)).collect(),
+            event_kinds: hameaux_core::history::Kind::ALL
+                .iter()
+                .map(|&k| Labeled {
+                    id: k as u8,
+                    label: k.label().into(),
+                })
+                .collect(),
+            goods: hameaux_core::economy::Good::ALL
+                .iter()
+                .map(|&g| Labeled {
+                    id: g as u8,
+                    label: g.label().into(),
+                })
+                .collect(),
         }
     }
 }

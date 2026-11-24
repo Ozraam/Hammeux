@@ -617,9 +617,14 @@ impl World {
         bought
     }
 
-    /// Le marchand vend : `sold` unités pour `money` sous (après taxe).
-    pub(super) fn trader_sold(&mut self, p: u32, g: usize, sold: f32, money: f32) {
+    /// Le marchand vend au marché du village `vi` : `sold` unités pour `gross` sous, dont
+    /// `money` lui reviennent (après taxe).
+    pub(super) fn trader_sold(&mut self, p: u32, vi: usize, g: usize, sold: f32, gross: f32, money: f32) {
         self.trade.sold[g] += sold;
+        if sold > 0.0 {
+            let (from, to) = (self.people[p as usize].village, self.villages[vi].id);
+            std::sync::Arc::make_mut(&mut self.history).add_flow(from, to, g, sold, gross);
+        }
         if let Some(t) = self.trade.traders.get_mut(&p) {
             t.cargo[g] = (t.cargo[g] - sold).max(0.0);
             t.purse += money;

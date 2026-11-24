@@ -76,8 +76,11 @@ pub struct World {
     pub economy: Economy,
     /// Marchands, routes, nouvelles des prix (phase 5).
     pub trade: crate::trade::Trade,
-    /// Chefs, justice, fêtes, maladies, savoirs (phase 6). Toujours en dernier : voir `save.rs`.
+    /// Chefs, justice, fêtes, maladies, savoirs (phase 6).
     pub society: crate::society::Society,
+    /// Relevés des villages, flux du commerce, annales (phase 7). Partagé avec l'instantané
+    /// publié : modifier via `Arc::make_mut`. Toujours en dernier : voir `save.rs`.
+    pub history: Arc<crate::history::History>,
     #[serde(skip)]
     pub caches: Scratch<Caches>,
 }
@@ -110,6 +113,7 @@ impl World {
             economy: Economy::default(),
             trade: Default::default(),
             society: Default::default(),
+            history: Default::default(),
             caches: Scratch::default(),
         };
         w.ensure_caches();
