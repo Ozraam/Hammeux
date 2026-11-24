@@ -49,10 +49,13 @@ impl World {
     fn walk(&mut self, i: usize) {
         let tick = self.tick;
         let width = self.map.width;
+        // Neige, boue, crue ; l'orage arrête les charrettes.
+        let slow = self.walk_slow(i);
         let p = &mut self.people[i];
         // Les charrettes vont plus vite sur les routes.
         let road = p.brain.traveling && self.map.road_at(p.tile(width) as usize);
         let mut budget = WALK
+            * slow
             * if road { 1.4 } else { 1.0 }
             * if p.child(tick) {
                 0.85

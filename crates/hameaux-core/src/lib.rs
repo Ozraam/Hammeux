@@ -21,6 +21,7 @@ pub mod sim;
 pub mod society;
 pub mod trade;
 pub mod tuning;
+pub mod weather;
 pub mod world;
 
 pub use clock::{Clock, Season};

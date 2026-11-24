@@ -83,8 +83,11 @@ pub struct World {
     pub history: Arc<crate::history::History>,
     /// Mode dieu : foi, effets en cours, croyances, cultes, journal des actes (phase 8).
     pub god: crate::god::God,
-    /// Sol des champs, gibier et poisson (phase 9). Toujours en dernier : voir `save.rs`.
+    /// Sol des champs, gibier et poisson (phase 9).
     pub land: crate::land::Land,
+    /// Fronts, temps de chaque village, incendies, dangers de la route (phase 10). Toujours en
+    /// dernier : voir `save.rs`.
+    pub weather: crate::weather::Weather,
     #[serde(skip)]
     pub caches: Scratch<Caches>,
 }
@@ -120,6 +123,7 @@ impl World {
             history: Default::default(),
             god: Default::default(),
             land: Default::default(),
+            weather: Default::default(),
             caches: Scratch::default(),
         };
         w.ensure_caches();

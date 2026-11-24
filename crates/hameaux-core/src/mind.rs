@@ -313,6 +313,13 @@ pub enum MemoryKind {
     Cursed,
     /// Un signe dans le ciel.
     Omen,
+    // Phase 10.
+    Storm,
+    Flood,
+    Wildfire,
+    HarshWinter,
+    /// Détroussé par des brigands.
+    Waylaid,
 }
 
 /// Nombre maximal de souvenirs gardés (les plus faibles s'effacent d'abord).
@@ -364,6 +371,11 @@ impl Memory {
             MemoryKind::Blessed => format!("Le jour où le Ciel l'a béni{e}"),
             MemoryKind::Cursed => format!("Le jour où le Ciel l'a maudit{e}"),
             MemoryKind::Omen => "Un signe dans le ciel".into(),
+            MemoryKind::Storm => "Le grand orage".into(),
+            MemoryKind::Flood => "La crue de la rivière".into(),
+            MemoryKind::Wildfire => "L'incendie de la forêt".into(),
+            MemoryKind::HarshWinter => "L'hiver rude".into(),
+            MemoryKind::Waylaid => "Le jour où des brigands l'ont détroussé{e}".into(),
         }
     }
 }

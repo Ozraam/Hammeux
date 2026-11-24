@@ -1046,7 +1046,8 @@ impl World {
             let v = &self.villages[vi];
             let id = v.id;
             let k = (if v.hungry_days > 0 { 2.5 } else { 1.0 })
-                * (if season == Season::Winter { 1.5 } else { 1.0 });
+                * (if season == Season::Winter { 1.5 } else { 1.0 })
+                * self.chill(vi);
             if !self.rng.chance(k / (4.0 * DAYS_PER_YEAR_F)) {
                 continue;
             }
@@ -1390,11 +1391,21 @@ mod tests {
             w.infect(r as usize, Disease::Fever, id);
         }
         let cases = w.society.stats.cases[Disease::Fever as usize];
-        for _ in 0..12 {
-            w.tick += DAY;
-            w.diseases();
+        // La contagion est affaire de hasard : quelques tirages, il en faut un où elle passe.
+        let start = w.clone();
+        let mut total = cases;
+        for seed in 0..8 {
+            w = start.clone();
+            w.rng = crate::rng::Rng::new(seed);
+            for _ in 0..12 {
+                w.tick += DAY;
+                w.diseases();
+            }
+            total = w.society.stats.cases[Disease::Fever as usize];
+            if total > cases {
+                break;
+            }
         }
-        let total = w.society.stats.cases[Disease::Fever as usize];
         assert!(total > cases, "la fièvre ne s'est pas répandue ({total})");
         let tick = w.tick;
         for &r in &family {

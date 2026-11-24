@@ -24,7 +24,8 @@ pub const MAGIC: &[u8; 4] = b"HAMX";
 /// 8 : + histoire (relevés quotidiens des villages, flux du commerce, annales), à la fin.
 /// 9 : + mode dieu (foi, effets en cours, croyances, cultes, journal des actes), à la fin.
 /// 10 : + terres (sol des champs, gibier et poisson de chaque village), à la fin.
-pub const SAVE_VERSION: u32 = 10;
+/// 11 : + météo (fronts, temps des villages, incendies, dangers de la route), à la fin.
+pub const SAVE_VERSION: u32 = 11;
 
 /// Métiers connus jusqu'à la version 5.
 const JOBS_V5: usize = 10;
@@ -234,6 +235,28 @@ impl PersonV5 {
 }
 
 /// Monde de la phase 7 : celui d'aujourd'hui sans le mode dieu.
+/// Monde de la phase 9 : sans la météo.
+#[derive(Deserialize)]
+#[cfg_attr(test, derive(serde::Serialize))]
+struct WorldV10 {
+    seed: u64,
+    tick: u64,
+    map: Map,
+    villages: Vec<crate::settlement::Village>,
+    people: Vec<crate::people::Person>,
+    chronicle: crate::events::Chronicle,
+    rng: crate::rng::Rng,
+    next_building: u32,
+    chunk_rev: Vec<u64>,
+    map_rev: u64,
+    economy: crate::economy::Economy,
+    trade: crate::trade::Trade,
+    society: crate::society::Society,
+    history: std::sync::Arc<crate::history::History>,
+    god: crate::god::God,
+    land: crate::land::Land,
+}
+
 /// Monde de la phase 8 : sans les terres.
 #[derive(Deserialize)]
 #[cfg_attr(test, derive(serde::Serialize))]
@@ -433,6 +456,7 @@ pub fn decode(bytes: &[u8]) -> Result<Loaded, SaveError> {
                 history: Default::default(),
                 god: Default::default(),
                 land: Default::default(),
+                weather: Default::default(),
                 caches: Default::default(),
             };
             w.ensure_caches();
@@ -463,6 +487,7 @@ pub fn decode(bytes: &[u8]) -> Result<Loaded, SaveError> {
                 history: Default::default(),
                 god: Default::default(),
                 land: Default::default(),
+                weather: Default::default(),
                 caches: Default::default(),
             };
             w.ensure_caches();
@@ -491,6 +516,7 @@ pub fn decode(bytes: &[u8]) -> Result<Loaded, SaveError> {
                 history: Default::default(),
                 god: Default::default(),
                 land: Default::default(),
+                weather: Default::default(),
                 caches: Default::default(),
             };
             w.ensure_caches();
@@ -518,6 +544,7 @@ pub fn decode(bytes: &[u8]) -> Result<Loaded, SaveError> {
                 history: Default::default(),
                 god: Default::default(),
                 land: Default::default(),
+                weather: Default::default(),
                 caches: Default::default(),
             };
             w.ensure_caches();
@@ -544,6 +571,7 @@ pub fn decode(bytes: &[u8]) -> Result<Loaded, SaveError> {
                 history: Default::default(),
                 god: Default::default(),
                 land: Default::default(),
+                weather: Default::default(),
                 caches: Default::default(),
             };
             w.ensure_caches();
@@ -569,6 +597,7 @@ pub fn decode(bytes: &[u8]) -> Result<Loaded, SaveError> {
                 history: v.history,
                 god: Default::default(),
                 land: Default::default(),
+                weather: Default::default(),
                 caches: Default::default(),
             };
             w.ensure_caches();
@@ -593,6 +622,32 @@ pub fn decode(bytes: &[u8]) -> Result<Loaded, SaveError> {
                 history: v.history,
                 god: v.god,
                 land: Default::default(),
+                weather: Default::default(),
+                caches: Default::default(),
+            };
+            w.ensure_caches();
+            Ok(Loaded::Current(w))
+        }
+        10 => {
+            let v: WorldV10 = postcard::from_bytes(&raw)?;
+            let mut w = World {
+                seed: v.seed,
+                tick: v.tick,
+                map: std::sync::Arc::new(v.map),
+                villages: v.villages,
+                people: v.people,
+                chronicle: v.chronicle,
+                rng: v.rng,
+                next_building: v.next_building,
+                chunk_rev: v.chunk_rev,
+                map_rev: v.map_rev,
+                economy: v.economy,
+                trade: v.trade,
+                society: v.society,
+                history: v.history,
+                god: v.god,
+                land: v.land,
+                weather: Default::default(),
                 caches: Default::default(),
             };
             w.ensure_caches();
@@ -658,8 +713,15 @@ pub(crate) mod tests {
         let field = w.villages[0].fields[0].id;
         w.land.soil_mut(field).richness = 0.6;
         w.land.wild_mut(0).game = 0.4;
+        // La météo : un front, un village mouillé, un marchand en voyage, un incendie.
+        assert!(!w.weather.local.is_empty());
+        w.weather.local_mut(0).snow = 0.4;
+        w.weather.trips.insert(someone, Default::default());
+        w.weather.danger.insert((1, 2), 0.7);
+        w.weather.burnt.push((5, 3, 6));
         match decode(&encode(&w).unwrap()).unwrap() {
             Loaded::Current(back) => {
+                assert_eq!(back.weather, w.weather);
                 assert_eq!(back.land, w.land);
                 assert_eq!(back.god, w.god);
                 assert_eq!(back.god.deeds.len(), 5);
@@ -862,6 +924,48 @@ pub(crate) mod tests {
                         .any(|e| e.text.starts_with("Fondation"))
                 );
                 assert_eq!(back.history.annals_seen, back.chronicle.next_seq);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// Une sauvegarde de la phase 9 est reprise telle quelle, avec une météo neuve.
+    #[test]
+    fn reads_v10() {
+        let mut w = sample();
+        w.land.wild_mut(0).fish = 0.3;
+        let v10 = WorldV10 {
+            seed: w.seed,
+            tick: w.tick,
+            map: (*w.map).clone(),
+            villages: w.villages.clone(),
+            people: w.people.clone(),
+            chronicle: w.chronicle.clone(),
+            rng: w.rng.clone(),
+            next_building: w.next_building,
+            chunk_rev: w.chunk_rev.clone(),
+            map_rev: w.map_rev,
+            economy: w.economy.clone(),
+            trade: w.trade.clone(),
+            society: w.society.clone(),
+            history: w.history.clone(),
+            god: w.god.clone(),
+            land: w.land.clone(),
+        };
+        let raw = postcard::to_stdvec(&v10).unwrap();
+        let mut bytes = MAGIC.to_vec();
+        bytes.extend_from_slice(&10u32.to_le_bytes());
+        bytes.extend_from_slice(&zstd::encode_all(&raw[..], 3).unwrap());
+        match decode(&bytes).unwrap() {
+            Loaded::Current(mut back) => {
+                assert_eq!(back.land, w.land);
+                assert_eq!(back.villages, w.villages);
+                assert_eq!(back.weather, crate::weather::Weather::default());
+                // Et le monde repart : le temps se met en place.
+                for _ in 0..(2 * crate::tuning::HOUR) {
+                    back.step();
+                }
+                assert_eq!(back.weather.local.len(), back.villages.len());
             }
             other => panic!("{other:?}"),
         }

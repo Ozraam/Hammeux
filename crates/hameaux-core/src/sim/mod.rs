@@ -14,6 +14,7 @@ mod mind;
 mod society;
 mod tasks;
 mod trade;
+mod weather;
 
 pub use mind::{INTENT_LABELS, LEVEL_LABELS, MindStats, skill_level};
 
@@ -58,6 +59,7 @@ impl World {
         let clock = self.clock();
         if self.tick.is_multiple_of(HOUR) {
             self.god_hourly();
+            self.weather_hourly();
             match clock.hour {
                 6 => self.wake_up(),
                 7 | 18 | 21 => self.reset_plans(),
@@ -75,6 +77,7 @@ impl World {
                     self.daily_society();
                     self.daily_god();
                     self.daily_land();
+                    self.daily_weather();
                     self.record_history();
                 }
                 _ => {}
@@ -192,8 +195,8 @@ impl World {
             return;
         }
         for vi in 0..self.villages.len() {
-            // Pluie et sécheresse du mode dieu.
-            let rate = rate * self.growth_factor(self.villages[vi].id);
+            // Le temps (humidité du sol, froid, chaleur), la pluie et la sécheresse du Ciel.
+            let rate = rate * self.growth_factor(self.villages[vi].id) * self.weather_growth(vi);
             for f in &mut self.villages[vi].fields {
                 if f.state == FieldState::Sown && rate > 0.0 {
                     f.growth += rate;

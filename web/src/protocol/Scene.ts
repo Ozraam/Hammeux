@@ -4,4 +4,8 @@ import type { FieldView } from "./FieldView";
 import type { HouseView } from "./HouseView";
 import type { PersonDot } from "./PersonDot";
 
-export type Scene = { tick: number, people: Array<PersonDot>, houses: Array<HouseView>, fields: Array<FieldView>, civic: Array<CivicView>, };
+export type Scene = { tick: number, people: Array<PersonDot>, houses: Array<HouseView>, fields: Array<FieldView>, civic: Array<CivicView>, 
+/**
+ * Cases de forêt en feu (x, y).
+ */
+fires: Array<[number, number]>, };

@@ -265,6 +265,65 @@ impl World {
                 );
                 Ok((Some(village), vec![], text))
             }
+            GodCommand::ClearSky { village } => {
+                let vi = self.vi_of(village)?;
+                let storm = self.god.active(village, SpellKind::Storm, tick);
+                self.god
+                    .spells
+                    .retain(|s| !(s.village == village && s.kind == SpellKind::Storm));
+                let gone = self.clear_sky(vi);
+                if gone == 0 && !storm {
+                    return Err(format!(
+                        "Le ciel est déjà dégagé au-dessus {}",
+                        de(&self.villages[vi].name)
+                    ));
+                }
+                self.witness(vi, power, 0.06);
+                let text = format!(
+                    "Le Ciel dissipe les nuages au-dessus {}",
+                    de(&self.villages[vi].name)
+                );
+                Ok((Some(village), vec![], text))
+            }
+            GodCommand::Cold { village } => {
+                let vi = self.vi_of(village)?;
+                self.divine_front(vi, crate::weather::FrontKind::Cold);
+                self.witness(vi, power, 0.08);
+                let name = &self.villages[vi].name;
+                let text = if season == Season::Winter {
+                    format!("Le Ciel envoie un froid mortel sur {name}")
+                } else {
+                    format!("Le Ciel envoie une vague de froid sur {name}")
+                };
+                Ok((Some(village), vec![], text))
+            }
+            GodCommand::Flood { village } => {
+                let vi = self.vi_of(village)?;
+                let what = self.flood(vi, true)?;
+                self.witness(vi, power, 0.12);
+                let text = what.replacen("Crue : la rivière déborde", "Le Ciel fait déborder la rivière", 1);
+                Ok((Some(village), vec![], text))
+            }
+            GodCommand::Wildfire { x, y } => {
+                if !self.map.inside(x as i64, y as i64) {
+                    return Err("Cette case est hors de la carte".into());
+                }
+                let tile = self
+                    .forest_around(x, y)
+                    .ok_or("Pas de forêt ici : il faut des arbres pour un incendie")?;
+                let (tx, ty) = self.map.xy(tile as usize);
+                let text = self
+                    .start_fire(tile, true, "le Ciel")
+                    .ok_or("Le feu ne prend pas : un incendie brûle déjà près d'ici")?;
+                if let Some(vi) = self.witness_village(tx, ty) {
+                    self.witness(vi, power, 0.1);
+                }
+                let fire = self.weather.fires.last().map(|f| f.village).unwrap_or(None);
+                let text = text
+                    .replacen("Incendie de forêt", "Le Ciel embrase la forêt", 1)
+                    .replace(" : le Ciel a mis le feu aux bois", "");
+                Ok((fire, vec![], text))
+            }
             GodCommand::Forest { x, y } => {
                 if !self.map.inside(x as i64, y as i64) {
                     return Err("Cette case est hors de la carte".into());

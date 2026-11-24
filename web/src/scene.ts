@@ -35,6 +35,10 @@ const ACT_PRAYING = 28;
 const SPELL = { rain: 0, drought: 1, storm: 2, abundance: 3, locusts: 4, bounty: 5 } as const;
 /** Rayon (cases) des effets du Ciel autour du grenier. */
 const SPELL_R = 16;
+/** Rayon (cases) où l'on dessine le temps qu'il fait autour du grenier. */
+const WEATHER_R = 34;
+/** Ciel (`CivicView.sky`). */
+const SKY = { clear: 0, showers: 1, rain: 2, storm: 3, snow: 4 } as const;
 const FLAGS = [0xe0533d, 0xf2c94c, 0x3d8fd9, 0x4caf6b, 0xf2f2f2];
 
 interface Moving {
@@ -58,6 +62,7 @@ export class SceneLayer {
   /** Effets du Ciel, redessinés à chaque image par-dessus les habitants. */
   private readonly sky = new Graphics();
   private civic: Scene["civic"] = [];
+  private fires: Scene["fires"] = [];
   private moving = new Map<number, Moving>();
   private villageColor = new Map<number, number>();
   selected: number | null = null;
@@ -72,6 +77,7 @@ export class SceneLayer {
     this.sky.clear();
     this.moving.clear();
     this.civic = [];
+    this.fires = [];
   }
 
   update(scene: Scene) {
@@ -89,6 +95,7 @@ export class SceneLayer {
     this.moving = next;
     for (const c of scene.civic) this.villageColor.set(c.village, c.color);
     this.civic = scene.civic;
+    this.fires = scene.fires;
     this.drawBuildings(scene);
   }
 
@@ -271,6 +278,7 @@ export class SceneLayer {
     const t = now / 1000;
     /** Un trait d'au moins un pixel et demi à l'écran. */
     const px = (w: number) => Math.max(w, 1.5 / scale);
+    this.drawWeather(g, t, px);
     for (const c of this.civic) {
       if (!c.spells.length) continue;
       const cx = c.x + 1, cy = c.y + 1;
@@ -342,6 +350,80 @@ export class SceneLayer {
           g.circle(x, y, px(0.12) + 0.06 * Math.sin(t * 4 + k)).fill({ color: 0xffe066, alpha: 0.75 });
         }
       }
+    }
+  }
+
+  /**
+   * Le temps qu'il fait autour de chaque grenier (phase 10) : neige au sol, eau de la crue,
+   * averses, pluie, orage (nuée et éclairs), flocons ; et les incendies de forêt (flammes qui
+   * dansent, fumée qui monte).
+   */
+  private drawWeather(g: Graphics, t: number, px: (w: number) => number) {
+    const R = WEATHER_R;
+    for (const c of this.civic) {
+      const cx = c.x + 1, cy = c.y + 1;
+      const k0 = c.village * 7919;
+      if (c.snow > 0.05) g.circle(cx, cy, R).fill({ color: 0xf4f8ff, alpha: 0.1 + 0.3 * Math.min(1, c.snow) });
+      if (c.flooded) {
+        g.circle(cx, cy, R * 0.85).fill({ color: 0x4f7fb8, alpha: 0.16 });
+        for (let k = 0; k < 14; k++) {
+          const x = cx + (rnd(k0, k) * 2 - 1) * R * 0.7, y = cy + (rnd(k0, k + 40) * 2 - 1) * R * 0.7;
+          const r = 0.6 + ((t * 0.6 + rnd(k0, k + 80)) % 1) * 1.6;
+          g.ellipse(x, y, r, r * 0.45);
+        }
+        g.stroke({ color: 0xbfd8f2, width: px(0.06), alpha: 0.5 });
+      }
+      // Le Ciel a déjà ses propres pluie et orage : on ne double pas.
+      if (c.spells.includes(SPELL.rain) || c.spells.includes(SPELL.storm)) continue;
+      if (c.sky === SKY.storm) {
+        g.circle(cx, cy, R).fill({ color: 0x1a1f33, alpha: 0.26 });
+        const flash = Math.floor(t * 0.5 + c.village);
+        if (rnd(flash, 1) < 0.3 && (t * 0.5 + c.village) % 1 < 0.06) {
+          g.circle(cx, cy, R).fill({ color: 0xe8f0ff, alpha: 0.28 });
+          let x = cx + (rnd(flash, 2) - 0.5) * R, y = cy - R * 0.8;
+          g.moveTo(x, y);
+          for (let k = 0; k < 7; k++) {
+            x += (rnd(flash, 3 + k) - 0.5) * 3;
+            y += R * 0.24;
+            g.lineTo(x, y);
+          }
+          g.stroke({ color: 0xfaf7ff, width: px(0.3), alpha: 0.95 });
+        }
+      }
+      if (c.sky === SKY.snow) {
+        g.circle(cx, cy, R).fill({ color: 0xc9d3e6, alpha: 0.12 });
+        for (let k = 0; k < 260; k++) {
+          const x = cx + (rnd(k0, k) * 2 - 1) * R + Math.sin(t * 0.8 + k) * 0.6;
+          const y = cy - R + ((rnd(k0, k + 500) * 2 * R + t * 2.2) % (2 * R));
+          if (Math.hypot(x - cx, y - cy) > R) continue;
+          g.circle(x, y, px(0.1)).fill({ color: 0xffffff, alpha: 0.85 });
+        }
+      } else if (c.sky >= SKY.showers) {
+        const storm = c.sky === SKY.storm;
+        if (!storm) g.circle(cx, cy, R).fill({ color: 0x6f86a8, alpha: c.sky === SKY.rain ? 0.14 : 0.07 });
+        const n = storm ? 520 : c.sky === SKY.rain ? 340 : 140;
+        const len = storm ? 1.4 : 0.9;
+        for (let k = 0; k < n; k++) {
+          const x = cx + (rnd(k0, k) * 2 - 1) * R - (storm ? 0.8 : 0.3);
+          const y = cy - R + ((rnd(k0, k + 900) * 2 * R + t * (storm ? 22 : 14)) % (2 * R));
+          if (Math.hypot(x - cx, y - cy) > R) continue;
+          g.moveTo(x, y).lineTo(x + (storm ? 0.5 : 0.18), y + len);
+        }
+        g.stroke({ color: 0xd6e6ff, width: px(0.07), alpha: storm ? 0.65 : 0.5 });
+      }
+    }
+    // Incendies : chaque case en feu flambe, la fumée monte.
+    for (const [fx, fy] of this.fires) {
+      const k = fx * 31 + fy;
+      const x = fx + 0.5, y = fy + 0.5;
+      g.circle(x, y, 0.75).fill({ color: 0xff6a1a, alpha: 0.35 + 0.15 * Math.sin(t * 7 + k) });
+      for (let j = 0; j < 3; j++) {
+        const h = 0.5 + 0.35 * Math.sin(t * (6 + j) + k + j);
+        const ox = (rnd(k, j) - 0.5) * 0.6;
+        g.poly([x + ox - 0.2, y + 0.3, x + ox, y + 0.3 - h, x + ox + 0.2, y + 0.3]).fill({ color: j === 1 ? 0xffd24a : 0xff8a2a, alpha: 0.9 });
+      }
+      const s = (t * 0.4 + rnd(k, 9)) % 1;
+      g.circle(x + s * 1.2, y - 0.6 - s * 3, 0.3 + s * 0.9).fill({ color: 0x5a5550, alpha: 0.35 * (1 - s) });
     }
   }
 

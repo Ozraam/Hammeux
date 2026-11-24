@@ -84,26 +84,12 @@ impl World {
 }
 
 impl World {
-    /// Au premier jour du printemps : chaque village découvre ce que promet l'année (de
-    /// maigre à belle, rarement très mauvaise), et la taille repart de zéro.
+    /// Au premier jour du printemps, la taille repart de zéro et l'année s'ouvre : ce que
+    /// promet la récolte dépend désormais du temps qu'il fera (voir `sim/weather.rs`), et
+    /// chaque village le saura à la fin du printemps.
     fn new_year(&mut self) {
         for vi in 0..self.villages.len() {
-            // Somme de deux tirages : les années moyennes sont les plus fréquentes.
-            let roll = (self.rng.f32() + self.rng.f32()) / 2.0;
-            let harvest = 0.7 + 0.5 * roll;
-            *self.land.year_mut(vi) = crate::land::Year {
-                harvest,
-                ..Default::default()
-            };
-            let (id, name) = (self.villages[vi].id, self.villages[vi].name.clone());
-            let text = if harvest < 0.82 {
-                format!("À {name}, le printemps est froid et sec : la récolte sera maigre")
-            } else if harvest > 1.1 {
-                format!("À {name}, le printemps est doux et humide : la récolte s'annonce belle")
-            } else {
-                continue;
-            };
-            self.event(Some(id), vec![], text);
+            *self.land.year_mut(vi) = crate::land::Year::default();
         }
     }
 

@@ -11,6 +11,7 @@ import type { MapInfo } from "./protocol/MapInfo";
 import type { RunState } from "./protocol/RunState";
 import type { Scene } from "./protocol/Scene";
 import type { VillageView } from "./protocol/VillageView";
+import type { WeatherMap } from "./protocol/WeatherMap";
 import { Pages } from "./pages";
 import { Chronicle, Panel } from "./panels";
 import { SceneLayer } from "./scene";
@@ -116,6 +117,7 @@ const hooks: {
   mapRev?: (rev: number) => void;
   events?: (seq: number) => void;
   villages?: (v: VillageView[]) => void;
+  weather?: (w: WeatherMap) => void;
   welcome?: () => void;
   god?: (g: GodGauge) => void;
 } = {};
@@ -128,6 +130,7 @@ const link = connect({
         return;
       case "Villages":
         hooks.villages?.(msg.villages);
+        hooks.weather?.(msg.weather);
         return;
       case "Hello":
         seed = msg.seed;
@@ -173,7 +176,11 @@ async function start() {
   const overview = new Sprite(map.overviewTexture);
   const details = new Container();
   const scene = new SceneLayer();
-  world.addChild(buildTable(map.w, map.h), overview, details, scene.container);
+  // Le temps sur la carte : fronts (nuées) et incendies (lueurs), redessinés à chaque image.
+  const weatherLayer = new Graphics();
+  let weatherMap: WeatherMap | null = null;
+  hooks.weather = (w) => (weatherMap = w);
+  world.addChild(buildTable(map.w, map.h), overview, details, weatherLayer, scene.container);
   const night = new Graphics();
   const markers = new Container();
   app.stage.addChild(world, night, markers);
@@ -465,6 +472,7 @@ async function start() {
     camera.update(ticker.deltaMS / 1000);
     sendView();
     scene.draw(camera.scale);
+    drawWeather(weatherLayer, weatherMap, camera.scale, map.w, map.h);
     map.flush();
     updateDetails();
     // Nuit : voile bleu nuit sur la carte (les repères restent lisibles).
@@ -502,6 +510,43 @@ async function start() {
     mapStatus = map.loadedCount < map.chunkCount ? `carte ${map.loadedCount}/${map.chunkCount}` : `carte ${map.w}×${map.h}`;
     renderHud();
   });
+}
+
+/** Couleur et opacité des fronts (`FrontView.kind` : pluie, orage, temps sec, froid). */
+const FRONTS: [number, number][] = [
+  [0x8a9ab8, 0.55],
+  [0x2a3050, 0.6],
+  [0xffe7a0, 0.22],
+  [0xd8f2ff, 0.3],
+];
+
+/**
+ * Fronts et incendies sur la carte (en cases). De loin, les fronts sont bien visibles ; de
+ * près, ils s'effacent derrière la pluie et la neige dessinées autour des villages.
+ */
+function drawWeather(g: Graphics, w: WeatherMap | null, scale: number, mw: number, mh: number) {
+  g.clear();
+  if (!w) return;
+  const t = performance.now() / 1000;
+  const fade = scale >= 6 ? 0.25 : scale >= 2 ? 0.6 : 1;
+  for (const f of w.fronts) {
+    const [color, alpha] = FRONTS[f.kind] ?? FRONTS[0];
+    const a = alpha * Math.min(1, f.strength + 0.15) * fade;
+    if (a < 0.01 || f.x + f.radius < 0 || f.x - f.radius > mw || f.y + f.radius < 0 || f.y - f.radius > mh) continue;
+    // Bords adoucis : trois disques de plus en plus petits.
+    for (const k of [1, 0.75, 0.5]) g.circle(f.x, f.y, f.radius * k).fill({ color, alpha: a / 3 });
+    // Une ligne d'orages : quelques éclairs de loin en loin.
+    if (f.kind === 1 && scale < 6 && (t * 0.8 + f.id) % 1 < 0.05) {
+      g.circle(f.x, f.y, f.radius * 0.5).fill({ color: 0xf2f4ff, alpha: 0.25 });
+    }
+  }
+  for (const fire of w.fires) {
+    const r = Math.max(2.5, Math.sqrt(fire.burning) * 1.4);
+    const p = 0.75 + 0.25 * Math.sin(t * 5 + fire.id);
+    g.circle(fire.x, fire.y, r * 2.2).fill({ color: 0xff7a1a, alpha: 0.18 * p });
+    g.circle(fire.x, fire.y, r).fill({ color: 0xffb03a, alpha: 0.55 * p });
+    g.circle(fire.x, fire.y - r * 1.8, r * 1.5).fill({ color: 0x4a4440, alpha: 0.18 });
+  }
 }
 
 start().catch((e) => {

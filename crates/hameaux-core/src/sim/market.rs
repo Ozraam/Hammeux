@@ -305,11 +305,10 @@ impl World {
     }
 
     fn firewood(&self, members: &[usize]) -> f32 {
-        let per = if self.clock().season == Season::Winter {
-            0.45
-        } else {
-            0.15
-        };
+        // Selon le froid de la veille (un hiver rude en demande bien plus).
+        let per = members
+            .first()
+            .map_or(0.15, |&m| self.heating(self.people[m].village));
         // (plus l'entretien de la maison)
         members.len() as f32 * per + crate::land::HOUSE_UPKEEP
     }
