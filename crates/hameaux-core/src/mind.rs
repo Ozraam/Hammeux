@@ -304,6 +304,15 @@ pub enum MemoryKind {
     Sick,
     Invented,
     Banished,
+    // Phase 8.
+    /// Témoin d'un bienfait du Ciel.
+    Miracle,
+    /// Témoin d'un fléau du Ciel.
+    Scourge,
+    Blessed,
+    Cursed,
+    /// Un signe dans le ciel.
+    Omen,
 }
 
 /// Nombre maximal de souvenirs gardés (les plus faibles s'effacent d'abord).
@@ -350,6 +359,11 @@ impl Memory {
             MemoryKind::Sick => "Sa guérison après une maladie".into(),
             MemoryKind::Invented => "Sa découverte".into(),
             MemoryKind::Banished => "Son bannissement".into(),
+            MemoryKind::Miracle => "Un prodige du Ciel".into(),
+            MemoryKind::Scourge => "La colère du Ciel".into(),
+            MemoryKind::Blessed => format!("Le jour où le Ciel l'a béni{e}"),
+            MemoryKind::Cursed => format!("Le jour où le Ciel l'a maudit{e}"),
+            MemoryKind::Omen => "Un signe dans le ciel".into(),
         }
     }
 }

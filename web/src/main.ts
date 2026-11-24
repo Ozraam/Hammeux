@@ -1,9 +1,11 @@
 import "./style.css";
 import { Application, Container, Graphics, Sprite, Text, Texture } from "pixi.js";
 import { Camera } from "./camera";
+import { Heaven } from "./god";
 import { connect } from "./net";
 import { css, isWater } from "./palette";
 import type { ClockView } from "./protocol/ClockView";
+import type { GodGauge } from "./protocol/GodGauge";
 import type { MapChanges } from "./protocol/MapChanges";
 import type { MapInfo } from "./protocol/MapInfo";
 import type { RunState } from "./protocol/RunState";
@@ -115,6 +117,7 @@ const hooks: {
   events?: (seq: number) => void;
   villages?: (v: VillageView[]) => void;
   welcome?: () => void;
+  god?: (g: GodGauge) => void;
 } = {};
 
 const link = connect({
@@ -140,6 +143,7 @@ const link = connect({
     }
     hooks.mapRev?.(msg.map_rev);
     hooks.events?.(msg.events_seq);
+    hooks.god?.(msg.god);
     renderHud();
   },
   onStatus(ok) {
@@ -181,7 +185,15 @@ async function start() {
   // Fiches (habitant, village) et chronique.
   let following: number | null = null;
   let pages: Pages | null = null;
+  // Mode dieu : la fiche ouverte est rechargée après chaque acte.
+  let sheetRef: Panel | null = null;
+  const heaven = new Heaven({
+    villageName: (id) => info.villages.find((v) => v.id === id)?.name ?? `village ${id}`,
+    done: () => sheetRef?.reload(),
+  });
   const sheet = new Panel({
+    godButtons: (target, id, extra) => heaven.sheetButtons(target, id, extra),
+    power: (key, target, id) => heaven.choose(key, target === "person" ? { person: id } : { village: id }),
     goTo: (x, y) => {
       if (pages?.open) pages.close();
       camera.flyTo(x, y, Math.max(camera.scale, 14));
@@ -189,6 +201,15 @@ async function start() {
     follow: (id) => (following = id),
     select: (id) => (scene.selected = id),
   });
+  sheetRef = sheet;
+  // Signe dans le ciel : un grand éclat de lumière sur tout l'écran.
+  let lastSign = -1;
+  let signAt = -1e9;
+  hooks.god = (g) => {
+    if (lastSign >= 0 && g.sign > lastSign) signAt = performance.now();
+    lastSign = g.sign;
+    heaven.update(g);
+  };
   pages = new Pages({
     info,
     openPerson: (id) => sheet.openPerson(id),
@@ -248,7 +269,7 @@ async function start() {
   const villageButtons = new Map<number, HTMLButtonElement>();
   const villageLabel = (v: VillageView) =>
     `<span class="swatch" style="background:${css(v.color)}"></span>${v.name}<span class="muted count">${v.population}</span>`;
-  const villageMarkers: { v: VillageView; c: Container }[] = [];
+  const villageMarkers: { v: VillageView; c: Container; label: Text }[] = [];
   const addVillage = (v: VillageView) => {
     const g = new Graphics();
     g.circle(0, 0, 7).fill(v.color).stroke({ color: 0xffffff, width: 2 });
@@ -272,17 +293,19 @@ async function start() {
     c.eventMode = "static";
     c.cursor = "pointer";
     c.on("pointertap", () => {
+      if (heaven.targeting) return; // le clic sur la carte désigne la cible (voir pointerup)
       camera.flyTo(v.x + 1, v.y + 1, 14);
       sheet.openVillage(v.id);
     });
     markers.addChild(c);
-    villageMarkers.push({ v, c });
+    villageMarkers.push({ v, c, label });
 
     const b = document.createElement("button");
     b.type = "button";
     villageButtons.set(v.id, b);
     b.innerHTML = villageLabel(v);
     b.onclick = () => {
+      if (heaven.pick({ village: v.id })) return;
       camera.flyTo(v.x + 1, v.y + 1, 14);
       sheet.openVillage(v.id);
       if (narrow()) panel.open = false;
@@ -293,8 +316,17 @@ async function start() {
   hooks.villages = (list) => {
     for (const v of list) {
       const b = villageButtons.get(v.id);
-      if (b) b.innerHTML = villageLabel(v);
-      else {
+      if (b) {
+        b.innerHTML = villageLabel(v);
+        // Village renommé par le Ciel.
+        const m = villageMarkers.find((x) => x.v.id === v.id);
+        if (m && m.label.text !== v.name) {
+          m.label.text = v.name;
+          m.v.name = v.name;
+          const known = info.villages.find((w) => w.id === v.id);
+          if (known) known.name = v.name;
+        }
+      } else {
         addVillage(v);
         if (!info.villages.some((w) => w.id === v.id)) info.villages.push(v);
       }
@@ -343,6 +375,23 @@ async function start() {
     const wx = (e.clientX - camera.x) / camera.scale;
     const wy = (e.clientY - camera.y) / camera.scale;
     const hit = camera.scale >= DETAIL_FROM ? scene.pick(wx, wy, Math.max(0.7, 12 / camera.scale)) : null;
+    // Mode dieu : le clic désigne la cible du pouvoir choisi.
+    if (heaven.targeting) {
+      const t = camera.toTile(e.clientX, e.clientY);
+      const want = heaven.targeting.power.target;
+      if ((want === "person" || want === "two_people") && hit !== null) heaven.pick({ person: hit });
+      else if (want === "village" || want === "two_villages") {
+        const reach = Math.max(24, 16 / camera.scale);
+        const near = info.villages
+          .map((v) => ({ v, d: Math.hypot(v.x + 1 - wx, v.y + 1 - wy) }))
+          .filter((x) => x.d <= reach)
+          .sort((a, b) => a.d - b.d)[0];
+        if (near) heaven.pick({ village: near.v.id });
+        else heaven.toast("Aucun village par ici : clique plus près d'un village", false);
+      } else if (want === "tile" && map.inside(t.x, t.y)) heaven.pick({ tile: [t.x, t.y] });
+      else if (want === "person") heaven.toast("Aucun habitant ici : zoome sur un village et clique sur quelqu'un", false);
+      return;
+    }
     if (hit !== null) sheet.openPerson(hit);
     else if (e.pointerType !== "mouse") showTip(e.clientX, e.clientY);
   });
@@ -422,6 +471,22 @@ async function start() {
     const dark = darkness(hourOf(estimatedTick()));
     night.clear();
     if (dark > 0) night.rect(0, 0, app.screen.width, app.screen.height).fill({ color: 0x0b1026, alpha: dark * 0.5 });
+    // Signe dans le ciel : un éclat doré qui grandit puis s'efface (5 s).
+    const since = (performance.now() - signAt) / 1000;
+    if (since < 5) {
+      const w = app.screen.width, h = app.screen.height;
+      const a = since < 0.6 ? since / 0.6 : 1 - (since - 0.6) / 4.4;
+      night.rect(0, 0, w, h).fill({ color: 0xfff1c2, alpha: 0.35 * a });
+      const cx = w / 2, cy = h * 0.22;
+      for (let k = 0; k < 14; k++) {
+        const ang = (k / 14) * Math.PI * 2 + since * 0.15;
+        const len = Math.max(w, h) * (0.3 + 0.5 * Math.min(1, since / 1.5));
+        night.moveTo(cx, cy).lineTo(cx + Math.cos(ang) * len, cy + Math.sin(ang) * len);
+      }
+      night.stroke({ color: 0xffe08a, width: 18, alpha: 0.18 * a });
+      for (const [r, al] of [[260, 0.25], [150, 0.4], [70, 0.7]] as const) night.circle(cx, cy, r * (0.6 + 0.4 * Math.min(1, since))).fill({ color: 0xfff6d8, alpha: al * a });
+    }
+    document.body.classList.toggle("targeting", !!heaven.targeting);
     // De près, le grenier est visible : on garde seulement le nom, au-dessus du toit.
     const close = camera.scale >= 6;
     for (const { v, c } of villageMarkers) {

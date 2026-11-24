@@ -4,7 +4,7 @@ Un monde de villages simulé en continu sur un serveur, consultable dans le navi
 
 ## Structure
 
-- `crates/hameaux-core` : moteur (monde, carte, habitants et leurs esprits, villages, économie, commerce, société, simulation, chronique et histoire, sauvegarde). Ni réseau ni disque.
+- `crates/hameaux-core` : moteur (monde, carte, habitants et leurs esprits, villages, économie, commerce, société, mode dieu et religion, simulation, chronique et histoire, sauvegarde). Ni réseau ni disque.
 - `crates/hameaux-worldgen` : génération du monde (relief, rivières, milieux, ressources, villages).
 - `crates/hameaux-protocol` : messages serveur ↔ navigateur ; génère `web/src/protocol/*.ts` via `cargo test`.
 - `crates/hameaux-server` : boucle de simulation, API HTTP/WebSocket, sauvegardes.
@@ -25,8 +25,12 @@ Aperçu d'un monde sans lancer le serveur (statistiques + image) :
 
 ```bash
 cargo run --release -p hameaux-cli -- map --seed 42 --out carte.png
-cargo run --release -p hameaux-cli -- run --seed 42 --days 336   # 12 ans : population, greniers, humeurs, intentions, commerce, prix, société, histoire, événements
+cargo run --release -p hameaux-cli -- run --seed 42 --days 336   # 12 ans : population, greniers, humeurs, intentions, commerce, prix, société, histoire, le Ciel, événements
+cargo run --release -p hameaux-cli -- run --days 336 --god demo  # … avec un dieu automatique qui essaie chaque pouvoir
+cargo run --release -p hameaux-cli -- run --days 30 --god actes.json  # … en rejouant des commandes datées
 ```
+
+Un script `--god` est une liste JSON de commandes datées par `tick` ou par `day` (fractionnaire) : `[{"day": 1.5, "command": {"power": "rain", "village": 0}}]`. Le journal du serveur (`GET /api/god/deeds`) a la même forme et se rejoue tel quel sur un monde de même graine.
 
 ## Variables d'environnement
 
@@ -57,9 +61,12 @@ cargo run --release -p hameaux-cli -- run --seed 42 --days 336   # 12 ans : popu
 - `GET /api/summary?since=TICK` : ce qui s'est passé depuis une date (`Summary`).
 - WebSocket : le client envoie `{"type":"View",x0,y0,x1,y1,detail}` ; le serveur répond par des `Scene` (ce qui est visible) et des `Villages`.
 - `GET /api/map/chunk/{cx}/{cy}` : tronçon 64×64 en binaire, 6 couches d'un octet par case (altitude, milieu, drapeaux, ressource, fertilité, ombrage), compressé en gzip.
+- `GET /api/god` : foi, pouvoirs (coût, cible), derniers actes, religion de chaque village (`GodView`). La jauge de foi arrive aussi avec chaque `Tick`.
+- `POST /api/god` avec une commande, par exemple `{"power": "rain", "village": 3}`, `{"power": "bless", "person": 12}`, `{"power": "matchmake", "a": 12, "b": 40}`, `{"power": "road", "from": 1, "to": 4}`, `{"power": "forest", "x": 300, "y": 410}`, `{"power": "deposit", "x": 300, "y": 410, "resource": 2}`, `{"power": "plague", "village": 3, "disease": 0}`, `{"power": "rename", "village": 3, "name": "Clairefont"}`, `{"power": "sign"}` : l'acte (`DeedView`), ou 400 et la raison du refus (cible inconnue, pas assez de foi…). Les 21 pouvoirs sont listés par `GET /api/god`.
+- `GET /api/god/deeds` : tout le journal des actes, rejouable par `hameaux-cli run --god`.
 - `POST /api/admin/pause`, `/resume`, `/save` ; `POST /api/admin/speed` avec `{"speed": 600}`.
 
-Pages du site (fragment de l'adresse, à partager ou mettre en favori) : `#/monde`, `#/village/{id}`, `#/commerce`, `#/chronique?village=&kind=&person=&q=&annals=1`, `#/arbre/{id}`, `#/visite?since=TICK`.
+Pages du site (fragment de l'adresse, à partager ou mettre en favori) : `#/monde`, `#/village/{id}`, `#/commerce`, `#/chronique?village=&kind=&person=&q=&annals=1`, `#/arbre/{id}`, `#/visite?since=TICK`, `#/ciel`.
 
 Pas d'authentification : le site n'est accessible que depuis le réseau local ou le VPN.
 

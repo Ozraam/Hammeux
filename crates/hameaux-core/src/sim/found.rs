@@ -105,7 +105,7 @@ impl World {
         None
     }
 
-    fn stone_nearby(&self, cx: u32, cy: u32) -> bool {
+    pub(crate) fn stone_nearby(&self, cx: u32, cy: u32) -> bool {
         let m = &self.map;
         let r = RESOURCE_RADIUS as i64;
         for dy in (-r..=r).step_by(2) {

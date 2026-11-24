@@ -9,7 +9,12 @@ use std::{
     time::{Duration, Instant},
 };
 
-use hameaux_core::{World, clock::TICK_SECONDS, save};
+use hameaux_core::{
+    World,
+    clock::TICK_SECONDS,
+    god::{Deed, GodCommand},
+    save,
+};
 use hameaux_protocol::RunState;
 use tokio::sync::{oneshot, watch};
 
@@ -25,6 +30,8 @@ pub enum Command {
     SaveNow(oneshot::Sender<Result<u64, String>>),
     /// Sauvegarde puis arrête la boucle ; répond quand c'est fait.
     Shutdown(oneshot::Sender<()>),
+    /// Un pouvoir du mode dieu, appliqué entre deux ticks (au tick courant).
+    God(GodCommand, oneshot::Sender<Result<Deed, String>>),
 }
 
 /// Ce que le web voit du monde.
@@ -107,6 +114,14 @@ impl Loop {
                         last_save = Instant::now();
                     }
                     Command::Shutdown(reply) => return self.final_save(Some(reply)),
+                    Command::God(cmd, reply) => {
+                        let result = self.world.god_command(&cmd);
+                        match &result {
+                            Ok(d) => tracing::info!(tick = d.tick, "mode dieu : {}", d.text),
+                            Err(e) => tracing::info!("mode dieu refusé : {e}"),
+                        }
+                        let _ = reply.send(result);
+                    }
                 }
                 self.publish();
             }

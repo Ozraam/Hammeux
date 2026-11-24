@@ -119,6 +119,8 @@ pub enum Act {
     // Phase 6 (ajoutés à la fin : l'index est envoyé au navigateur).
     Feasting,
     Ill,
+    // Phase 8.
+    Praying,
 }
 
 impl Act {
@@ -151,6 +153,7 @@ impl Act {
             Act::Travelling => "voyage",
             Act::Trading => "attend le marché",
             Act::Feasting => "fait la fête",
+            Act::Praying => "prie le Ciel",
             Act::Ill => "est malade, alité",
         }
     }
@@ -241,6 +244,8 @@ pub enum Intent {
     Leave,
     /// Aller à la fête (ou à la foire) du village.
     Feast,
+    /// Prier (le jour de repos, les croyants).
+    Pray,
 }
 
 impl Intent {
@@ -267,6 +272,7 @@ impl Intent {
             Intent::Play => "joue",
             Intent::Leave => "s'en va",
             Intent::Feast => "va à la fête",
+            Intent::Pray => "va prier",
         }
     }
 }

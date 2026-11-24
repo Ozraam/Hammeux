@@ -5,6 +5,7 @@
 //! amitiés chaque minute, pousse des champs, puis chaque habitant agit.
 
 mod found;
+mod god;
 mod history;
 mod life;
 mod market;
@@ -55,6 +56,7 @@ impl World {
         self.tick += 1;
         let clock = self.clock();
         if self.tick.is_multiple_of(HOUR) {
+            self.god_hourly();
             match clock.hour {
                 6 => self.wake_up(),
                 7 | 18 | 21 => self.reset_plans(),
@@ -70,6 +72,7 @@ impl World {
                     self.daily_minds();
                     self.daily_trade();
                     self.daily_society();
+                    self.daily_god();
                     self.record_history();
                 }
                 _ => {}
@@ -183,8 +186,13 @@ impl World {
             Season::Autumn => 0.8,
             Season::Winter => 0.0,
         } / (FIELD_GROW_DAYS * DAY as f32);
-        for v in &mut self.villages {
-            for f in &mut v.fields {
+        if rate <= 0.0 {
+            return;
+        }
+        for vi in 0..self.villages.len() {
+            // Pluie et sécheresse du mode dieu.
+            let rate = rate * self.growth_factor(self.villages[vi].id);
+            for f in &mut self.villages[vi].fields {
                 if f.state == FieldState::Sown && rate > 0.0 {
                     f.growth += rate;
                     if f.growth >= 1.0 {

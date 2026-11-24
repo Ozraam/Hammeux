@@ -72,4 +72,8 @@ health: string | null,
 /**
  * Condamnations par le chef.
  */
-convictions: number, events: Array<EventView>, };
+convictions: number, 
+/**
+ * Croyance au Ciel (0–1) et ce qu'elle veut dire (« croyante fervente »).
+ */
+belief: number, belief_label: string, events: Array<EventView>, };

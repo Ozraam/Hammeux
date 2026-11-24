@@ -25,7 +25,7 @@ const MIN_PROFIT: f32 = 4.0;
 /// Population à partir de laquelle un village essaime.
 const COLONY_POP: usize = 60;
 /// Villages au plus sur la carte.
-const MAX_VILLAGES: usize = 30;
+pub(super) const MAX_VILLAGES: usize = 30;
 
 impl World {
     /// Reprise d'une sauvegarde sans commerce : revenus complétés pour les nouveaux métiers.
@@ -1016,6 +1016,11 @@ impl World {
             }
         }
         let (_, x, y) = best?;
+        Some(self.new_site(x, y))
+    }
+
+    /// Emplacement d'un nouveau village : un nom libre et une couleur.
+    pub(super) fn new_site(&mut self, x: u32, y: u32) -> Site {
         let name = self.colony_name(x, y);
         let color = names::VILLAGE_COLORS[self.villages.len() % names::VILLAGE_COLORS.len()];
         // Couleur un peu décalée pour ne pas confondre avec le village de même couleur.
@@ -1025,12 +1030,12 @@ impl World {
         } else {
             color
         };
-        Some(Site { name, x, y, color })
+        Site { name, x, y, color }
     }
 
     /// Un nom libre (de la liste des noms de villages), avec « -sur-Mer » ou « -les-Bois »
     /// selon les environs.
-    fn colony_name(&mut self, x: u32, y: u32) -> String {
+    pub(super) fn colony_name(&mut self, x: u32, y: u32) -> String {
         let used: Vec<&str> = self.villages.iter().map(|v| v.name.as_str()).collect();
         let free: Vec<&str> = names::VILLAGES
             .iter()

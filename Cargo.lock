@@ -397,6 +397,8 @@ dependencies = [
  "hameaux-core",
  "hameaux-worldgen",
  "png",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -405,6 +407,7 @@ version = "0.1.0"
 dependencies = [
  "postcard",
  "serde",
+ "serde_json",
  "thiserror",
  "zstd",
 ]

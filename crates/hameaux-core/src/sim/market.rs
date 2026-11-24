@@ -136,6 +136,7 @@ impl World {
                 inv[wood] -= 2.0 * k;
                 inv[tools] += k * tempering;
             }
+            Workshop::Temple => {}
         }
     }
 

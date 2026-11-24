@@ -1,6 +1,7 @@
 import { css } from "./palette";
 import type { EventView } from "./protocol/EventView";
 import type { PersonRef } from "./protocol/PersonRef";
+import type { CultView } from "./protocol/CultView";
 import type { PersonSheet } from "./protocol/PersonSheet";
 import type { VillageSheet } from "./protocol/VillageSheet";
 
@@ -11,6 +12,10 @@ export interface PanelActions {
   follow(id: number | null): void;
   /** Habitant mis en évidence sur la carte. */
   select(id: number | null): void;
+  /** Boutons des pouvoirs du Ciel pour cette fiche. */
+  godButtons(target: "person" | "village", id: number, extra?: { sick?: boolean }): string;
+  /** Un pouvoir choisi depuis la fiche, sur sa cible. */
+  power(key: string, target: "person" | "village", id: number): void;
 }
 
 export const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
@@ -61,6 +66,11 @@ export class Panel {
     this.actions.follow(id);
   }
 
+  /** Recharge la fiche ouverte tout de suite (après un acte du Ciel). */
+  reload() {
+    if (this.current) this.refresh();
+  }
+
   private async refresh() {
     clearTimeout(this.timer);
     const cur = this.current;
@@ -83,9 +93,12 @@ export class Panel {
   }
 
   private onClick(e: MouseEvent) {
-    const t = (e.target as HTMLElement).closest<HTMLElement>("[data-person],[data-village],[data-close],[data-follow],[data-goto]");
+    const t = (e.target as HTMLElement).closest<HTMLElement>("[data-power],[data-person],[data-village],[data-close],[data-follow],[data-goto]");
     if (!t) return;
-    if (t.dataset.close !== undefined) this.close();
+    if (t.dataset.power) {
+      const [kind, id] = (t.dataset.target ?? "").split(":");
+      this.actions.power(t.dataset.power, kind as "person" | "village", Number(id));
+    } else if (t.dataset.close !== undefined) this.close();
     else if (t.dataset.person) this.openPerson(Number(t.dataset.person));
     else if (t.dataset.village) this.openVillage(Number(t.dataset.village));
     else if (t.dataset.follow) {
@@ -119,6 +132,7 @@ export class Panel {
       ${p.alive ? `<p class="mood"><span class="dot" style="background:${moodColor(p.mood_value)}"></span>${esc(cap(p.mood))}</p>${p.traits.length ? `<p class="traits muted">${esc(cap(p.traits.join(", ")))}</p>` : ""}` : ""}
       ${p.health ? `<p class="sick">${esc(cap(p.health))}</p>` : ""}
       ${actions}
+      ${p.alive ? this.actions.godButtons("person", p.id, { sick: !!p.health }) : ""}
       ${pages}
       <dl>
         ${p.home ? `<dt>Maison</dt><dd>${esc(p.home)}</dd>` : ""}
@@ -126,6 +140,7 @@ export class Panel {
         ${p.master ? `<dt>Apprenti${p.female ? "e" : ""} de</dt><dd>${link(p.master)}</dd>` : ""}
         ${p.skill ? `<dt>Métier</dt><dd>${esc(p.skill.rank)} ${meter(p.skill.value)}</dd>` : ""}
         ${p.alive ? `<dt>Réputation</dt><dd>${esc(p.reputation_label)}</dd>` : ""}
+        <dt>Le Ciel</dt><dd class="${p.belief >= 0.25 ? "belief" : "muted"}">${esc(p.belief_label)}</dd>
         ${p.convictions ? `<dt>Justice</dt><dd>condamné${p.female ? "e" : ""} ${p.convictions === 1 ? "une fois" : `${p.convictions} fois`}</dd>` : ""}
         ${p.goals.length ? `<dt>Rêve${p.goals.length > 1 ? "s" : ""}</dt><dd>${p.goals.map((g) => (g.reached ? `<s class="muted">${esc(g.label)}</s> ✓` : esc(g.label))).join("<br>")}</dd>` : ""}
       </dl>
@@ -152,6 +167,7 @@ export class Panel {
       <h2><span class="swatch" style="background:${css(v.color)}"></span>${esc(v.name)}</h2>
       <p class="sub">${esc(v.founded)}${v.founded_from ? ` par des familles de <a data-village="${v.founded_from.id}">${esc(v.founded_from.name)}</a>` : ""}</p>
       <div class="row"><button data-goto="${v.x + 1},${v.y + 1}">Aller au village</button></div>
+      ${this.actions.godButtons("village", v.id)}
       <p class="links-row"><a href="#/village/${v.id}">Tableau de bord</a> · <a href="#/chronique?village=${v.id}">Chronique du village</a></p>
       <dl>
         <dt>Habitants</dt><dd>${v.population} (dont ${v.children} enfants, ${v.elders} aînés)</dd>
@@ -165,6 +181,7 @@ export class Panel {
         ${v.festivities.length ? `<dt>Fêtes</dt><dd>${v.festivities.map(esc).join("<br>")}</dd>` : ""}
         <dt>Ateliers</dt><dd>${v.workshops.length ? v.workshops.map(esc).join(", ") : "aucun"}</dd>
       </dl>
+      ${v.cult ? cultHtml(v.cult) : ""}
       <h3>Gouvernement</h3>
       ${v.chief
         ? `<p><a data-person="${v.chief.id}">${esc(v.chief.name)}</a> <span class="muted">· ${esc(v.chief.note)}</span>${v.council.length ? `<br><span class="muted">conseil :</span> ${v.council.map((r) => `<a data-person="${r.id}">${esc(r.name)}</a>`).join(", ")}` : ""}<br><span class="muted">${esc(v.next_election)}</span></p>`
@@ -243,6 +260,20 @@ export class Chronicle {
       this.loading = false;
     }
   }
+}
+
+/** Religion du village et effets du Ciel en cours (fiche de village). */
+function cultHtml(c: CultView): string {
+  const priest = c.priest ? `<a data-person="${c.priest.id}">${esc(c.priest.name)}</a> <span class="muted">· ${esc(c.priest.note)}</span>` : "";
+  const lines = [
+    c.name ? `<b>${esc(cap(c.name))}</b> <span class="muted">· ${esc(c.founded ?? "")}</span>` : `<span class="muted">Pas encore de culte.</span>`,
+    `Le village ${esc(c.attitude)} · ${c.believers} croyant${c.believers > 1 ? "s" : ""} sur ${c.population}`,
+    c.miracles || c.scourges ? `<span class="muted">${c.miracles} bienfait${c.miracles > 1 ? "s" : ""}, ${c.scourges} fléau${c.scourges > 1 ? "x" : ""}</span>` : "",
+    priest,
+    c.temple ? `Temple : ${esc(c.temple)}` : "",
+    ...c.spells.map((s) => `<span class="belief">✦ ${esc(cap(s))}</span>`),
+  ].filter(Boolean);
+  return `<h3>Le Ciel</h3><p>${lines.join("<br>")}</p>`;
 }
 
 export function money(c: number) {

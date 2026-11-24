@@ -28,9 +28,13 @@ impl World {
     /// Les besoins bougent selon ce que fait chacun ; les émotions retombent.
     pub(super) fn minds_tick(&mut self) {
         let tick = self.tick;
+        let mut praying = Vec::new();
         for p in self.people.iter_mut().filter(|p| p.alive()) {
             let child = p.child(tick);
             let (act, hidden, with) = (p.brain.act, p.brain.hidden, p.brain.with);
+            if act == Act::Praying {
+                praying.push(p.id);
+            }
             let m = &mut p.mind;
             let t = m.traits;
             let n = &mut m.needs;
@@ -51,6 +55,13 @@ impl World {
                     n.leisure += 0.12;
                     n.meaning += 0.01;
                     m.mood.joy = (m.mood.joy + 0.02).min(1.0);
+                }
+                Act::Praying => {
+                    n.meaning += 0.06;
+                    n.safety += 0.01;
+                    n.company += 0.02;
+                    m.mood.joy = (m.mood.joy + 0.01).min(1.0);
+                    m.mood.fear *= 0.95;
                 }
                 Act::Ill => {
                     n.sleep += 0.004;
@@ -86,6 +97,14 @@ impl World {
             if n.wellbeing() > 0.75 {
                 m.mood.add(Emotion::Joy, 0.006);
             }
+        }
+        // Les prières entretiennent la croyance et rendent de la foi.
+        let max = self.god.max_faith();
+        for id in praying {
+            let b = self.god.belief(id);
+            self.god.belief.insert(id, (b + 0.004 * (1.0 - b)).min(1.0));
+            self.god.faith = (self.god.faith + 0.02 + 0.03 * b).min(max.max(self.god.faith));
+            self.god.stats.prayers += 1;
         }
     }
 
@@ -861,7 +880,7 @@ pub struct MindStats {
     /// … qui sont allés voir quelqu'un.
     pub social: f32,
     /// … pour chaque intention (voir [`INTENT_LABELS`]).
-    pub intents: [f32; 12],
+    pub intents: [f32; 13],
     /// … à chaque niveau dans leur métier (voir [`LEVEL_LABELS`]).
     pub levels: [f32; 4],
 }
@@ -878,7 +897,7 @@ pub fn skill_level(s: f32) -> usize {
     }
 }
 
-pub const INTENT_LABELS: [&str; 12] = [
+pub const INTENT_LABELS: [&str; 13] = [
     "aucune",
     "dormir",
     "travailler",
@@ -891,6 +910,7 @@ pub const INTENT_LABELS: [&str; 12] = [
     "jouer",
     "partir",
     "fête",
+    "prière",
 ];
 
 fn intent_index(i: Intent) -> usize {
@@ -907,6 +927,7 @@ fn intent_index(i: Intent) -> usize {
         Intent::Play => 9,
         Intent::Leave => 10,
         Intent::Feast => 11,
+        Intent::Pray => 12,
     }
 }
 

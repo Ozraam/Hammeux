@@ -127,10 +127,12 @@ pub enum Kind {
     Village,
     Feelings,
     Other,
+    /// Le mode dieu et la religion (phase 8 ; après `Other` pour garder les numéros).
+    Divine,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 15] = [
+    pub const ALL: [Kind; 16] = [
         Kind::Birth,
         Kind::Death,
         Kind::Love,
@@ -145,6 +147,7 @@ impl Kind {
         Kind::Knowledge,
         Kind::Village,
         Kind::Feelings,
+        Kind::Divine,
         Kind::Other,
     ];
 
@@ -165,6 +168,7 @@ impl Kind {
             Kind::Village => "villages",
             Kind::Feelings => "vie intime",
             Kind::Other => "divers",
+            Kind::Divine => "le Ciel",
         }
     }
 
@@ -174,6 +178,8 @@ impl Kind {
         let starts = |s: &str| text.starts_with(s);
         if starts("Naissance") {
             Kind::Birth
+        } else if has("Ciel") || has(" temple") {
+            Kind::Divine
         } else if starts("Décès") || has(" meurt ") {
             Kind::Death
         } else if starts("Fondation de")
@@ -228,6 +234,9 @@ impl Kind {
     pub fn notable(self, text: &str) -> bool {
         match self {
             Kind::Village | Kind::Health | Kind::Government | Kind::Knowledge => true,
+            Kind::Divine => {
+                !text.starts_with("Le Ciel fait pleuvoir") && !text.starts_with("Le Ciel renomme")
+            }
             Kind::Trade => text.starts_with("Une route"),
             Kind::Feast => text.contains("Grande foire") || text.contains("Pas de fête"),
             Kind::Justice => text.contains(" bannit "),
@@ -339,6 +348,30 @@ mod tests {
             ("Fondation de Clairval (9 habitants)", Kind::Village),
             ("Léa a réalisé son rêve : trouver l'amour", Kind::Feelings),
             ("Léa et Paul sont brouillés", Kind::Feelings),
+            (
+                "Le Ciel fait pleuvoir sur Belair : les champs reverdissent",
+                Kind::Divine,
+            ),
+            (
+                "Le Ciel frappe Belair : la picote se déclare chez 3 habitants",
+                Kind::Divine,
+            ),
+            ("Le Ciel bénit Léa Martin", Kind::Divine),
+            (
+                "Envoyée par le Ciel, une famille de pèlerins arrive : Léa et Paul Roux",
+                Kind::Divine,
+            ),
+            (
+                "À Belair, on se met à prier le Ciel : naissance du culte du Ciel clément",
+                Kind::Divine,
+            ),
+            ("Léa Martin devient prêtresse du Ciel à Belair", Kind::Divine),
+            (
+                "Nouveau chantier à Belair : un temple pour prier le Ciel",
+                Kind::Divine,
+            ),
+            ("Le temple de Belair est terminé", Kind::Divine),
+            ("Une route relie désormais Belair et Rivedoux", Kind::Trade),
         ];
         for (text, kind) in cases {
             assert_eq!(Kind::of(text), kind, "{text}");
