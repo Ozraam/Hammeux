@@ -45,13 +45,13 @@ pub const MAX_FOOD: f32 = 5_000.0;
 pub const RATION_ADULT: f32 = 1.0;
 pub const RATION_CHILD: f32 = 0.6;
 /// Récolte d'un champ (rations) pour une fertilité de 1.
-pub const FIELD_YIELD: f32 = 120.0;
+pub const FIELD_YIELD: f32 = 72.0;
 /// Jours de pousse entre semis et récolte (croissance saisonnière comprise).
 pub const FIELD_GROW_DAYS: f32 = 9.0;
 /// Part d'un champ travaillée (labour, semis, moisson) par séance de 2 h.
-pub const FIELD_WORK_PER_SESSION: f32 = 0.34;
+pub const FIELD_WORK_PER_SESSION: f32 = 0.18;
 /// Champs visés par habitant.
-pub const FIELDS_PER_PERSON: f32 = 0.24;
+pub const FIELDS_PER_PERSON: f32 = 0.22;
 
 /// Durées des tâches.
 pub const WORK_SESSION: u64 = 2 * HOUR;
@@ -64,7 +64,7 @@ pub const BIRTH_PER_DAY: f32 = 1.0 / (5.0 * DAYS_PER_YEAR as f32);
 pub const PAIRING_PER_DAY: f32 = 0.08;
 pub const IMMIGRATION_PER_DAY: f32 = 0.03;
 /// Jours de disette avant qu'une famille parte.
-pub const FAMINE_DAYS: u32 = 4;
+pub const FAMINE_DAYS: u32 = 6;
 
 /// Déclin d'une maison vide.
 pub const ABANDONED_TO_RUIN: u64 = 2 * DAY;

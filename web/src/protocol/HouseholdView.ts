@@ -5,4 +5,12 @@ export type HouseholdView = { coins: number,
 /**
  * Jours de nourriture d'avance.
  */
-food_days: number, goods: Array<GoodAmount>, hungry: boolean, };
+food_days: number, goods: Array<GoodAmount>, hungry: boolean, 
+/**
+ * Champs que cultive ce foyer.
+ */
+fields: number, 
+/**
+ * Ce qu'il doit encore à la caisse du village (avances).
+ */
+debt: number, };

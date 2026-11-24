@@ -127,6 +127,8 @@ export class SceneLayer {
       const colors = [0xa58455, 0x7a5634, 0x8a6a3e, 0xe0b84a];
       let c = colors[f.state];
       if (f.state === 2) c = mix(0x9fbf5a, 0xd9b44a, f.growth);
+      // Une terre épuisée pâlit ; une terre bien fumée fonce.
+      if (f.state < 2) c = f.soil < 1 ? mix(c, 0xc8b89a, Math.min(1, (1 - f.soil) * 1.4)) : mix(c, 0x4a3020, Math.min(0.5, (f.soil - 1) * 3));
       g.rect(f.x + pad, f.y + pad, s - 2 * pad, s - 2 * pad).fill(c).stroke({ color: 0x6b4a2a, width: 0.08 });
       // Sillons.
       const furrow = f.state === 3 ? 0xc79a32 : f.state === 2 ? mix(0x7f9f45, 0xbf9a3a, f.growth) : 0x5e4127;
@@ -135,6 +137,15 @@ export class SceneLayer {
         g.moveTo(f.x + pad + 0.1, yy).lineTo(f.x + s - pad - 0.1, yy);
       }
       g.stroke({ color: furrow, width: 0.07 });
+      // Mauvaises herbes dans les champs qu'on ne sarcle pas.
+      if (f.state === 2 && f.weeds > 0.15) {
+        const n = Math.round(f.weeds * 10);
+        for (let k = 0; k < n; k++) {
+          const wx = f.x + pad + 0.2 + (((k * 7 + f.id * 3) % 11) / 11) * (s - 2 * pad - 0.4);
+          const wy = f.y + pad + 0.2 + (((k * 5 + f.id) % 7) / 7) * (s - 2 * pad - 0.4);
+          g.circle(wx, wy, 0.11).fill(0x4f7a2e);
+        }
+      }
     }
     for (const c of scene.civic) {
       // Grenier 2 × 2 au toit de la couleur du village, puits à côté.

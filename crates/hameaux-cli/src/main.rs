@@ -76,6 +76,8 @@ fn main() {
             // Part des adultes au travail / en visite, relevée à 10 h et 15 h.
             let (mut working, mut social, mut samples) = (0.0f32, 0.0f32, 0.0f32);
             let mut intents = [0.0f32; 13];
+            // Tension économique, relevée chaque jour après le marché.
+            let mut strain = Strain::default();
             let mut intent_samples = 0.0f32;
             for day in 1..=days {
                 for _ in 0..TICKS_PER_DAY {
@@ -103,6 +105,9 @@ fn main() {
                     }
                     world.step();
                     let c = world.clock();
+                    if world.tick % TICKS_PER_DAY == 12 * hameaux_core::tuning::HOUR {
+                        strain.sample(&world);
+                    }
                     if (c.hour == 10 || c.hour == 15)
                         && world.tick.is_multiple_of(hameaux_core::tuning::HOUR)
                         && !hameaux_core::sim::rest_day(world.tick)
@@ -249,6 +254,7 @@ fn main() {
                     .collect();
                 println!("  {:<20} {}", v.name, row.join(" "));
             }
+            strain.report(&world);
             society(&world);
             history(&world);
             heaven(&world);
@@ -639,4 +645,136 @@ fn usage() -> ! {
         "usage : hameaux-cli map|run [--seed N] [--size N] [--days N] [--out fichier.png] [--god actes.json|demo]"
     );
     std::process::exit(2)
+}
+
+/// Tension économique (phase 9) : prix bloqués au plancher ou au plafond, villages qui ont
+/// faim, inégalités d'argent entre foyers, état des terres.
+#[derive(Default)]
+struct Strain {
+    /// (bien, village) relevés, au plancher, au plafond.
+    prices: [f32; 3],
+    /// Relevés au plancher et au plafond, par bien.
+    floor: [f32; 9],
+    ceiling: [f32; 9],
+    /// Jours × villages de disette, et relevés.
+    hungry: f32,
+    village_days: f32,
+    /// Gini moyen de l'argent des foyers.
+    gini: f32,
+    days: f32,
+}
+
+impl Strain {
+    fn sample(&mut self, w: &World) {
+        use hameaux_core::economy::Good;
+        for (vi, v) in w.villages.iter().enumerate() {
+            let Some(m) = w.economy.markets.get(vi) else {
+                continue;
+            };
+            for g in Good::ALL {
+                let (p, base) = (m.price[g as usize], g.base_price());
+                self.prices[0] += 1.0;
+                if p <= base * 0.31 {
+                    self.prices[1] += 1.0;
+                    self.floor[g as usize] += 1.0;
+                } else if p >= base * 4.9 {
+                    self.prices[2] += 1.0;
+                    self.ceiling[g as usize] += 1.0;
+                }
+            }
+            self.village_days += 1.0;
+            if v.hungry_days > 0 {
+                self.hungry += 1.0;
+            }
+        }
+        self.gini += gini(&coins(w));
+        self.days += 1.0;
+    }
+
+    fn report(&self, w: &World) {
+        let pct = |a: f32, b: f32| 100.0 * a / b.max(1.0);
+        let mut c = coins(w);
+        c.sort_by(f32::total_cmp);
+        let total: f32 = c.iter().sum();
+        let top = c.iter().rev().take(c.len().div_ceil(10)).sum::<f32>();
+        let quarter = &c[..c.len() / 4];
+        println!(
+            "— tension — prix au plancher {:.0} % · au plafond {:.0} % · disette {:.1} % des jours-villages ({} fois) · argent : Gini {:.2} (moyenne {:.2}), 10 % les plus riches {:.0} %, quart le plus pauvre {:.1} sous/foyer",
+            pct(self.prices[1], self.prices[0]),
+            pct(self.prices[2], self.prices[0]),
+            pct(self.hungry, self.village_days),
+            w.chronicle
+                .events
+                .iter()
+                .filter(|e| e.text.starts_with("La faim s'installe"))
+                .count(),
+            gini(&c),
+            self.gini / self.days.max(1.0),
+            pct(top, total),
+            quarter.iter().sum::<f32>() / quarter.len().max(1) as f32,
+        );
+        let per: Vec<String> = hameaux_core::economy::Good::ALL
+            .iter()
+            .map(|&g| {
+                let k = g as usize;
+                let n = self.village_days;
+                format!(
+                    "{} {:.0}/{:.0}",
+                    g.label(),
+                    pct(self.floor[k], n),
+                    pct(self.ceiling[k], n)
+                )
+            })
+            .collect();
+        println!("  au plancher/au plafond (% des jours) : {}", per.join(" · "));
+        let soils: Vec<_> = w
+            .villages
+            .iter()
+            .flat_map(|v| v.fields.iter().map(|f| w.land.soil(f.id)))
+            .collect();
+        let n = soils.len().max(1) as f32;
+        let wild: Vec<_> = (0..w.villages.len()).map(|vi| w.land.wild(vi)).collect();
+        let m = wild.len().max(1) as f32;
+        println!(
+            "  terres : {} champs, sol {:.2} en moyenne (épuisés {:.0} %), herbes {:.2}, {:.0} % à un foyer · gibier {:.2} · poisson {:.2}",
+            soils.len(),
+            soils.iter().map(|s| s.richness).sum::<f32>() / n,
+            pct(soils.iter().filter(|s| s.richness < 0.6).count() as f32, n),
+            soils.iter().map(|s| s.weeds).sum::<f32>() / n,
+            pct(soils.iter().filter(|s| s.owner.is_some()).count() as f32, n),
+            wild.iter().map(|w| w.game).sum::<f32>() / m,
+            wild.iter().map(|w| w.fish).sum::<f32>() / m,
+        );
+        let smithies = w
+            .economy
+            .workshops
+            .values()
+            .filter(|&&k| k == hameaux_core::economy::Workshop::Smithy)
+            .count();
+        println!("  forges : {smithies} pour {} villages", w.villages.len());
+    }
+}
+
+/// Argent de chaque foyer habité.
+fn coins(w: &World) -> Vec<f32> {
+    w.villages
+        .iter()
+        .flat_map(|v| v.houses.iter())
+        .filter(|h| !h.residents.is_empty())
+        .filter_map(|h| w.economy.households.get(&h.id))
+        .map(|h| h.coins.max(0.0))
+        .collect()
+}
+
+/// Coefficient de Gini (0 : tous égaux, 1 : un seul a tout).
+fn gini(v: &[f32]) -> f32 {
+    let n = v.len() as f32;
+    let total: f32 = v.iter().sum();
+    if n < 2.0 || total <= 0.0 {
+        return 0.0;
+    }
+    let mut s = v.to_vec();
+    s.sort_by(f32::total_cmp);
+    let weighted: f32 = s.iter().enumerate().map(|(k, x)| (k as f32 + 1.0) * x).sum();
+    (2.0 * weighted) / (n * total) - (n + 1.0) / n
 }

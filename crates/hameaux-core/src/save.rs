@@ -23,7 +23,8 @@ pub const MAGIC: &[u8; 4] = b"HAMX";
 /// 7 : + société (chefs, justice, fêtes, maladies, savoirs), ajoutée à la fin.
 /// 8 : + histoire (relevés quotidiens des villages, flux du commerce, annales), à la fin.
 /// 9 : + mode dieu (foi, effets en cours, croyances, cultes, journal des actes), à la fin.
-pub const SAVE_VERSION: u32 = 9;
+/// 10 : + terres (sol des champs, gibier et poisson de chaque village), à la fin.
+pub const SAVE_VERSION: u32 = 10;
 
 /// Métiers connus jusqu'à la version 5.
 const JOBS_V5: usize = 10;
@@ -233,6 +234,27 @@ impl PersonV5 {
 }
 
 /// Monde de la phase 7 : celui d'aujourd'hui sans le mode dieu.
+/// Monde de la phase 8 : sans les terres.
+#[derive(Deserialize)]
+#[cfg_attr(test, derive(serde::Serialize))]
+struct WorldV9 {
+    seed: u64,
+    tick: u64,
+    map: Map,
+    villages: Vec<crate::settlement::Village>,
+    people: Vec<crate::people::Person>,
+    chronicle: crate::events::Chronicle,
+    rng: crate::rng::Rng,
+    next_building: u32,
+    chunk_rev: Vec<u64>,
+    map_rev: u64,
+    economy: crate::economy::Economy,
+    trade: crate::trade::Trade,
+    society: crate::society::Society,
+    history: std::sync::Arc<crate::history::History>,
+    god: crate::god::God,
+}
+
 #[derive(Deserialize)]
 #[cfg_attr(test, derive(serde::Serialize))]
 struct WorldV8 {
@@ -410,6 +432,7 @@ pub fn decode(bytes: &[u8]) -> Result<Loaded, SaveError> {
                 society: Default::default(),
                 history: Default::default(),
                 god: Default::default(),
+                land: Default::default(),
                 caches: Default::default(),
             };
             w.ensure_caches();
@@ -439,6 +462,7 @@ pub fn decode(bytes: &[u8]) -> Result<Loaded, SaveError> {
                 society: Default::default(),
                 history: Default::default(),
                 god: Default::default(),
+                land: Default::default(),
                 caches: Default::default(),
             };
             w.ensure_caches();
@@ -466,6 +490,7 @@ pub fn decode(bytes: &[u8]) -> Result<Loaded, SaveError> {
                 society: Default::default(),
                 history: Default::default(),
                 god: Default::default(),
+                land: Default::default(),
                 caches: Default::default(),
             };
             w.ensure_caches();
@@ -492,6 +517,7 @@ pub fn decode(bytes: &[u8]) -> Result<Loaded, SaveError> {
                 society: Default::default(),
                 history: Default::default(),
                 god: Default::default(),
+                land: Default::default(),
                 caches: Default::default(),
             };
             w.ensure_caches();
@@ -517,6 +543,7 @@ pub fn decode(bytes: &[u8]) -> Result<Loaded, SaveError> {
                 society: v.society,
                 history: Default::default(),
                 god: Default::default(),
+                land: Default::default(),
                 caches: Default::default(),
             };
             w.ensure_caches();
@@ -541,6 +568,31 @@ pub fn decode(bytes: &[u8]) -> Result<Loaded, SaveError> {
                 society: v.society,
                 history: v.history,
                 god: Default::default(),
+                land: Default::default(),
+                caches: Default::default(),
+            };
+            w.ensure_caches();
+            Ok(Loaded::Current(w))
+        }
+        9 => {
+            let v: WorldV9 = postcard::from_bytes(&raw)?;
+            let mut w = World {
+                seed: v.seed,
+                tick: v.tick,
+                map: std::sync::Arc::new(v.map),
+                villages: v.villages,
+                people: v.people,
+                chronicle: v.chronicle,
+                rng: v.rng,
+                next_building: v.next_building,
+                chunk_rev: v.chunk_rev,
+                map_rev: v.map_rev,
+                economy: v.economy,
+                trade: v.trade,
+                society: v.society,
+                history: v.history,
+                god: v.god,
+                land: Default::default(),
                 caches: Default::default(),
             };
             w.ensure_caches();
@@ -602,8 +654,13 @@ pub(crate) mod tests {
         ] {
             w.god_command(&cmd).unwrap();
         }
+        // Les terres : un champ fatigué, du gibier chassé.
+        let field = w.villages[0].fields[0].id;
+        w.land.soil_mut(field).richness = 0.6;
+        w.land.wild_mut(0).game = 0.4;
         match decode(&encode(&w).unwrap()).unwrap() {
             Loaded::Current(back) => {
+                assert_eq!(back.land, w.land);
                 assert_eq!(back.god, w.god);
                 assert_eq!(back.god.deeds.len(), 5);
                 assert_eq!(back.tick, w.tick);
@@ -805,6 +862,43 @@ pub(crate) mod tests {
                         .any(|e| e.text.starts_with("Fondation"))
                 );
                 assert_eq!(back.history.annals_seen, back.chronicle.next_seq);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// Une sauvegarde de la phase 8 est reprise telle quelle, avec des terres neuves (sol
+    /// intact, gibier et poisson abondants).
+    #[test]
+    fn reads_v9() {
+        let mut w = sample();
+        w.god.faith = 77.0;
+        let v9 = WorldV9 {
+            seed: w.seed,
+            tick: w.tick,
+            map: (*w.map).clone(),
+            villages: w.villages.clone(),
+            people: w.people.clone(),
+            chronicle: w.chronicle.clone(),
+            rng: w.rng.clone(),
+            next_building: w.next_building,
+            chunk_rev: w.chunk_rev.clone(),
+            map_rev: w.map_rev,
+            economy: w.economy.clone(),
+            trade: w.trade.clone(),
+            society: w.society.clone(),
+            history: w.history.clone(),
+            god: w.god.clone(),
+        };
+        let raw = postcard::to_stdvec(&v9).unwrap();
+        let mut bytes = MAGIC.to_vec();
+        bytes.extend_from_slice(&9u32.to_le_bytes());
+        bytes.extend_from_slice(&zstd::encode_all(&raw[..], 3).unwrap());
+        match decode(&bytes).unwrap() {
+            Loaded::Current(back) => {
+                assert_eq!(back.god, w.god);
+                assert_eq!(back.villages, w.villages);
+                assert_eq!(back.land, crate::land::Land::default());
             }
             other => panic!("{other:?}"),
         }

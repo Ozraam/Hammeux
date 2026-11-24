@@ -149,7 +149,7 @@ export class Panel {
         .join("")}</div></details>` : ""}
       ${p.alive ? `<h3>Besoins</h3><div class="needs">${p.needs.map((n) => `<span>${esc(n.label)}</span>${meter(n.value)}`).join("")}</div>` : ""}
       ${p.household ? `<h3>Son foyer</h3>
-        <p>${money(p.household.coins)} · ${Math.round(p.household.food_days)} jours de vivres${p.household.hungry ? ` · <b class="warn">a faim</b>` : ""}</p>
+        <p>${money(p.household.coins)}${p.household.debt >= 1 ? ` (doit ${money(p.household.debt)} à la caisse)` : ""} · ${Math.round(p.household.food_days)} jours de vivres${p.household.hungry ? ` · <b class="warn">a faim</b>` : ""}${p.household.fields ? ` · cultive ${p.household.fields} champ${p.household.fields > 1 ? "s" : ""}` : ""}</p>
         <p class="muted">${p.household.goods.map((g) => `${qty(g.amount)} ${esc(g.label)}`).join(" · ") || "réserves vides"}</p>` : ""}
       <h3>Famille</h3>${list(p.family)}
       <h3>Relations</h3>${list(p.relations)}
@@ -173,7 +173,7 @@ export class Panel {
         <dt>Habitants</dt><dd>${v.population} (dont ${v.children} enfants, ${v.elders} aînés)</dd>
         <dt>Métiers</dt><dd>${jobs || "—"}</dd>
         <dt>Maisons</dt><dd>${v.houses} habitées${v.sites ? `, ${v.sites} en chantier` : ""}${v.ruins ? `, ${v.ruins} en ruine` : ""}</dd>
-        <dt>Champs</dt><dd>${v.fields}${v.fields_ripe ? ` (${v.fields_ripe} prêts à moissonner)` : ""}</dd>
+        <dt>Champs</dt><dd>${v.fields}${v.fields_ripe ? ` (${v.fields_ripe} prêts à moissonner)` : ""}${v.fields > v.land.owned ? `, ${v.fields - v.land.owned} au village` : ""}</dd>
         <dt>Vivres</dt><dd>${v.food_days} jours (grenier commun : ${Math.round(v.food)} rations)${v.hungry ? ` <b class="warn">disette</b>` : ""}</dd>
         <dt>Chantiers</dt><dd>${v.wood} bois · ${v.has_stone ? `${v.stone} pierre` : "pas de carrière"}</dd>
         <dt>Caisse</dt><dd>${money(v.treasury)} · taxe ${Math.round(v.tax * 100)} %</dd>
@@ -181,6 +181,7 @@ export class Panel {
         ${v.festivities.length ? `<dt>Fêtes</dt><dd>${v.festivities.map(esc).join("<br>")}</dd>` : ""}
         <dt>Ateliers</dt><dd>${v.workshops.length ? v.workshops.map(esc).join(", ") : "aucun"}</dd>
       </dl>
+      ${landHtml(v)}
       ${v.cult ? cultHtml(v.cult) : ""}
       <h3>Gouvernement</h3>
       ${v.chief
@@ -309,4 +310,22 @@ function moodColor(v: number): string {
 
 export function cap(s: string) {
   return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+/** Terres, gibier et poisson, année, taille et aumônes, argent des foyers (phase 9). */
+function landHtml(v: VillageSheet): string {
+  const l = v.land;
+  const soil = l.soil >= 1.05 ? "bien fumées" : l.soil >= 0.9 ? "en bon état" : l.soil >= 0.7 ? "fatiguées" : "épuisées";
+  const wild = (x: number) => (x >= 0.75 ? "abondant" : x >= 0.45 ? "moins abondant" : x >= 0.25 ? "rare" : "presque disparu");
+  return `
+      <h3>Terres et argent</h3>
+      <dl>
+        <dt>Terres</dt><dd>${soil} ${meter(Math.min(1, l.soil / 1.1))}${l.worn ? ` <span class="warn">${l.worn} champ${l.worn > 1 ? "s" : ""} épuisé${l.worn > 1 ? "s" : ""}</span>` : ""}</dd>
+        <dt>Cette année</dt><dd>${esc(l.year)}</dd>
+        <dt>Gibier</dt><dd>${wild(l.game)} ${meter(l.game)}</dd>
+        <dt>Poisson</dt><dd>${wild(l.fish)} ${meter(l.fish)}</dd>
+        <dt>Taille</dt><dd>${money(l.levied)} levés depuis le printemps${l.alms >= 1 ? ` · ${money(l.alms)} d'aumônes` : ""}</dd>
+        <dt>Foyers</dt><dd>${money(l.coins_poor)} chez les plus pauvres · ${money(l.coins_median)} au milieu · ${money(l.coins_rich)} chez les plus riches</dd>
+        ${l.smithies > 1 ? `<dt>Forges</dt><dd>${l.smithies}</dd>` : ""}
+      </dl>`;
 }

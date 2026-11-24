@@ -82,8 +82,9 @@ pub struct World {
     /// publié : modifier via `Arc::make_mut`.
     pub history: Arc<crate::history::History>,
     /// Mode dieu : foi, effets en cours, croyances, cultes, journal des actes (phase 8).
-    /// Toujours en dernier : voir `save.rs`.
     pub god: crate::god::God,
+    /// Sol des champs, gibier et poisson (phase 9). Toujours en dernier : voir `save.rs`.
+    pub land: crate::land::Land,
     #[serde(skip)]
     pub caches: Scratch<Caches>,
 }
@@ -118,6 +119,7 @@ impl World {
             society: Default::default(),
             history: Default::default(),
             god: Default::default(),
+            land: Default::default(),
             caches: Scratch::default(),
         };
         w.ensure_caches();

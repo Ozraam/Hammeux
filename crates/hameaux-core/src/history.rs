@@ -186,11 +186,13 @@ impl Kind {
             || has("partent fonder un village")
             || starts("La faim s'installe")
             || has("non moissonné")
+            || has(", le printemps est ")
         {
             Kind::Village
         } else if has("Épidémie") || has("épidémie") {
             Kind::Health
-        } else if has(" chef") || has("cheffe") || has("la taxe") || has(" destitue ") {
+        } else if has(" chef") || has("cheffe") || has("la taxe") || has(" destitue ") || has("fait l'aumône")
+        {
             Kind::Government
         } else if has(" condamne ")
             || has(" pardonne ")
@@ -223,7 +225,11 @@ impl Kind {
             Kind::Building
         } else if has(" se fait ") || has(" devient ") || has(" maître ") {
             Kind::Work
-        } else if has("son rêve") || has("le cœur qui bat") || has("sont brouillés") {
+        } else if has("son rêve")
+            || has("le cœur qui bat")
+            || has("sont brouillés")
+            || has("partage ses provisions")
+        {
             Kind::Feelings
         } else {
             Kind::Other
@@ -291,6 +297,22 @@ mod tests {
     fn kinds_from_texts() {
         let cases = [
             ("Naissance de Léa chez Marie et Paul", Kind::Birth),
+            (
+                "Jeanne partage ses provisions avec la famille Martin",
+                Kind::Feelings,
+            ),
+            (
+                "À Belair, le printemps est froid et sec : la récolte sera maigre",
+                Kind::Village,
+            ),
+            (
+                "À Belair, le printemps est doux et humide : la récolte s'annonce belle",
+                Kind::Village,
+            ),
+            (
+                "La caisse de Belair fait l'aumône à 3 foyers dans le besoin (12 sous)",
+                Kind::Government,
+            ),
             ("Décès de Jean Martin à 71 ans", Kind::Death),
             ("Jean Martin meurt de la fièvre à 3 ans", Kind::Death),
             (
