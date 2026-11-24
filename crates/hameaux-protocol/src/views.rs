@@ -86,6 +86,12 @@ pub struct CivicView {
     /// Effets du Ciel en cours (index de `SpellKind` : 0 pluie, 1 sécheresse, 2 orage,
     /// 3 abondance, 4 sauterelles, 5 récolte miraculeuse).
     pub spells: Vec<u8>,
+    /// Le ciel (0 beau temps, 1 averses, 2 pluie, 3 orage, 4 neige), la neige au sol (0–1),
+    /// une crue en cours, la température (°C).
+    pub sky: u8,
+    pub snow: f32,
+    pub flooded: bool,
+    pub temp: f32,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
@@ -97,6 +103,8 @@ pub struct Scene {
     pub houses: Vec<HouseView>,
     pub fields: Vec<FieldView>,
     pub civic: Vec<CivicView>,
+    /// Cases de forêt en feu (x, y).
+    pub fires: Vec<[u32; 2]>,
 }
 
 impl Scene {
@@ -111,7 +119,16 @@ impl Scene {
             tick,
             ..Default::default()
         };
-        for v in &world.villages {
+        for f in &world.weather.fires {
+            for &(t, _) in &f.burning {
+                let (x, y) = world.map.xy(t as usize);
+                if inside(x as f32, y as f32) {
+                    scene.fires.push([x, y]);
+                }
+            }
+        }
+        for (vi, v) in world.villages.iter().enumerate() {
+            let sky = world.weather.local(vi);
             // Un village ne s'étend pas à plus d'une soixantaine de cases de son grenier.
             if !inside(v.x as f32, v.y as f32) && !near(v.x, v.y, x0, y0, x1, y1, 60) {
                 continue;
@@ -132,6 +149,10 @@ impl Scene {
                     .filter(|s| s.village == v.id && s.until > tick)
                     .map(|s| s.kind as u8)
                     .collect(),
+                sky: sky.sky(),
+                snow: sky.snow,
+                flooded: sky.flooded_until > tick,
+                temp: sky.temp,
             });
             for h in v.houses.iter().filter(|h| inside(h.x as f32, h.y as f32)) {
                 scene.houses.push(HouseView {
@@ -775,6 +796,9 @@ pub struct VillageSheet {
     pub techs: Vec<TechView>,
     /// Terres, gibier et poisson, année, taille et aumônes, argent des foyers (phase 9).
     pub land: LandView,
+    /// Le temps qu'il fait, le sol, la neige, les crues et incendies, les routes dangereuses
+    /// (phase 10).
+    pub weather: crate::SkyView,
     /// Malades en ce moment.
     pub sick: u32,
     /// « épidémie de fièvre (2 morts) ».
@@ -1095,6 +1119,7 @@ impl VillageSheet {
                 None => "pas encore de chef".to_string(),
             },
             land: land_view(world, vi),
+            weather: crate::sky_view(world, vi),
             techs: polity
                 .map(|p| {
                     p.techs

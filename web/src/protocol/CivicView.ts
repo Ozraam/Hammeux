@@ -16,4 +16,9 @@ fair: boolean,
  * Effets du Ciel en cours (index de `SpellKind` : 0 pluie, 1 sécheresse, 2 orage,
  * 3 abondance, 4 sauterelles, 5 récolte miraculeuse).
  */
-spells: Array<number>, };
+spells: Array<number>, 
+/**
+ * Le ciel (0 beau temps, 1 averses, 2 pluie, 3 orage, 4 neige), la neige au sol (0–1),
+ * une crue en cours, la température (°C).
+ */
+sky: number, snow: number, flooded: boolean, temp: number, };

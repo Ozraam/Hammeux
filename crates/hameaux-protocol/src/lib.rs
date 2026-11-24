@@ -8,11 +8,13 @@ use hameaux_core::{Biome, Clock, Map, Resource, World, map::CHUNK, settlement::V
 mod god;
 mod pages;
 mod views;
+mod weather;
 pub use god::*;
 pub use pages::*;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 pub use views::*;
+pub use weather::*;
 
 /// Date du monde, prête à afficher.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -95,8 +97,11 @@ pub enum ServerMsg {
     },
     /// Ce qui se trouve dans la zone regardée (après un `View` avec `detail`).
     Scene(Scene),
-    /// Résumé de chaque village (toutes les quelques secondes).
-    Villages { villages: Vec<VillageView> },
+    /// Résumé de chaque village et temps sur la carte (toutes les quelques secondes).
+    Villages {
+        villages: Vec<VillageView>,
+        weather: WeatherMap,
+    },
 }
 
 /// Messages du navigateur.

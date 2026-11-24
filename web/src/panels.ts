@@ -181,6 +181,7 @@ export class Panel {
         ${v.festivities.length ? `<dt>Fêtes</dt><dd>${v.festivities.map(esc).join("<br>")}</dd>` : ""}
         <dt>Ateliers</dt><dd>${v.workshops.length ? v.workshops.map(esc).join(", ") : "aucun"}</dd>
       </dl>
+      ${skyHtml(v)}
       ${landHtml(v)}
       ${v.cult ? cultHtml(v.cult) : ""}
       <h3>Gouvernement</h3>
@@ -310,6 +311,33 @@ function moodColor(v: number): string {
 
 export function cap(s: string) {
   return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+const SKY_ICONS = ["☀️", "🌦️", "🌧️", "⛈️", "🌨️"];
+const RIVERS = ["", "un ruisseau", "une rivière", "un fleuve"];
+
+/** Le temps qu'il fait, le sol, la neige, les crues, les incendies, les routes (phase 10). */
+function skyHtml(v: VillageSheet): string {
+  const w = v.weather;
+  const deg = (t: number) => `${Math.round(t)} °C`;
+  const alerts = [
+    w.harsh_winter ? `<b class="warn">hiver rude</b>` : "",
+    w.flooded ? `<b class="warn">crue en cours</b>` : "",
+    w.fire ? `<b class="warn">incendie de forêt (${w.fire} case${w.fire > 1 ? "s" : ""} en feu)</b>` : "",
+  ].filter(Boolean);
+  const growth = w.winter ? "la terre se repose jusqu'au printemps" : w.crop >= 1.05 ? "poussent bien" : w.crop >= 0.85 ? "poussent" : w.crop >= 0.5 ? "souffrent" : "ne poussent presque plus";
+  return `
+      <h3>Le temps</h3>
+      <dl>
+        <dt>Ciel</dt><dd>${SKY_ICONS[w.sky] ?? ""} ${esc(w.label)} · ${deg(w.temp)} <span class="muted">(hier ${deg(w.temp_mean)} en moyenne)</span></dd>
+        ${alerts.length ? `<dt>Alerte</dt><dd>${alerts.join(" · ")}</dd>` : ""}
+        <dt>Sol</dt><dd>${esc(w.soil)} ${meter(w.wet)}${w.dry_days >= 4 && w.wet < 0.5 ? ` <span class="muted">${w.dry_days} jours sans pluie</span>` : ""}</dd>
+        ${w.snow >= 0.05 ? `<dt>Neige</dt><dd>${meter(w.snow)}${w.snow > 0.25 ? ` <span class="muted">on marche lentement</span>` : ""}</dd>` : ""}
+        <dt>Champs</dt><dd>${growth}${w.winter ? "" : ` <span class="muted">(×${w.crop.toFixed(2)})</span>`}</dd>
+        <dt>Chauffage</dt><dd>${w.heating.toFixed(2)} bois par personne et par jour</dd>
+        ${w.river ? `<dt>Eau</dt><dd>${RIVERS[w.river]} passe près des champs : gare aux crues</dd>` : ""}
+        ${w.dangers.length ? `<dt>Routes</dt><dd>${w.dangers.map(([name, d]) => `${esc(name)} <span class="warn">${d >= 1 ? "brigands" : "dangereuse"}</span>`).join(" · ")}</dd>` : ""}
+      </dl>`;
 }
 
 /** Terres, gibier et poisson, année, taille et aumônes, argent des foyers (phase 9). */

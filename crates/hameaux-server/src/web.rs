@@ -19,7 +19,7 @@ use axum::{
 use hameaux_protocol::{
     ChronicleQuery, ClientMsg, ClockView, DeedView, EventPage, EventView, FamilyTree, GodGauge, GodView,
     Health, HistoryView, MapChanges, MapInfo, PersonSheet, Scene, ServerMsg, Summary, TradeMap, VillageSheet,
-    VillageView, encode_chunk,
+    VillageView, WeatherMap, WeatherReport, encode_chunk,
 };
 use serde::Deserialize;
 use tokio::sync::{oneshot, watch};
@@ -55,6 +55,7 @@ pub fn router(state: AppState, web_dir: &Path) -> Router {
         .route("/api/world/history", get(world_history))
         .route("/api/tree/{id}", get(tree))
         .route("/api/trade", get(trade))
+        .route("/api/weather", get(weather))
         .route("/api/chronicle", get(chronicle))
         .route("/api/summary", get(summary))
         .route("/api/god", get(god_view).post(god_command))
@@ -229,7 +230,10 @@ async fn stream(mut socket: WebSocket, snapshots: watch::Receiver<Arc<Snapshot>>
                     }
                 }
                 if beat.is_multiple_of(8) {
-                    out.push(ServerMsg::Villages { villages: w.villages.iter().map(|v| VillageView::of(w, v)).collect() });
+                    out.push(ServerMsg::Villages {
+                        villages: w.villages.iter().map(|v| VillageView::of(w, v)).collect(),
+                        weather: WeatherMap::of(w),
+                    });
                 }
                 beat += 1;
                 for msg in &out {
@@ -328,6 +332,11 @@ async fn tree(State(s): State<AppState>, AxumPath(id): AxumPath<u32>) -> Respons
 async fn trade(State(s): State<AppState>) -> Json<TradeMap> {
     let snap = s.snapshots.borrow().clone();
     Json(TradeMap::of(&snap.world))
+}
+
+async fn weather(State(s): State<AppState>) -> Json<WeatherReport> {
+    let snap = s.snapshots.borrow().clone();
+    Json(WeatherReport::of(&snap.world))
 }
 
 async fn chronicle(State(s): State<AppState>, Query(q): Query<ChronicleQuery>) -> Json<EventPage> {

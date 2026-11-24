@@ -245,6 +245,9 @@ impl World {
                     let (profit, want) = self.plan_trip(vi, j, &n, capital);
                     // Ce que coûte la route : l'auberge, les repas, l'usure de la charrette.
                     let mut profit = profit - self.road_cost(j, 1);
+                    // Les brigands et les accidents qu'on y a connus (les prudents s'en
+                    // souviennent plus).
+                    profit -= self.road_fear(i, home_id, other);
                     // Une foire s'y ouvre : on y vendra bien, on y apprendra beaucoup.
                     if self.fair_soon(other) {
                         profit = profit.max(MIN_PROFIT) + 12.0;
@@ -488,6 +491,7 @@ impl World {
     /// Fin d'un voyage (ou renoncement) : l'argent et la cargaison vont au foyer.
     fn end_trip(&mut self, i: usize, travelled: bool) {
         let id = self.people[i].id;
+        self.weather.trips.remove(&id);
         let Some(t) = self.trade.traders.get(&id).cloned() else {
             return;
         };

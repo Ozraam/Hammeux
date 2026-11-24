@@ -59,10 +59,11 @@ Un script `--god` est une liste JSON de commandes datées par `tick` ou par `day
 - `GET /api/tree/{id}` : arbre généalogique (`FamilyTree`).
 - `GET /api/trade` : carte du commerce — trajets, routes, ventes des marchands entre villages, charrettes en route (`TradeMap`).
 - `GET /api/summary?since=TICK` : ce qui s'est passé depuis une date (`Summary`).
+- `GET /api/weather` : fronts et incendies en cours, temps de chaque village, bilan des orages, crues, incendies, hivers rudes et brigands (`WeatherReport`). Les fronts et incendies arrivent aussi avec chaque message `Villages`.
 - WebSocket : le client envoie `{"type":"View",x0,y0,x1,y1,detail}` ; le serveur répond par des `Scene` (ce qui est visible) et des `Villages`.
 - `GET /api/map/chunk/{cx}/{cy}` : tronçon 64×64 en binaire, 6 couches d'un octet par case (altitude, milieu, drapeaux, ressource, fertilité, ombrage), compressé en gzip.
 - `GET /api/god` : foi, pouvoirs (coût, cible), derniers actes, religion de chaque village (`GodView`). La jauge de foi arrive aussi avec chaque `Tick`.
-- `POST /api/god` avec une commande, par exemple `{"power": "rain", "village": 3}`, `{"power": "bless", "person": 12}`, `{"power": "matchmake", "a": 12, "b": 40}`, `{"power": "road", "from": 1, "to": 4}`, `{"power": "forest", "x": 300, "y": 410}`, `{"power": "deposit", "x": 300, "y": 410, "resource": 2}`, `{"power": "plague", "village": 3, "disease": 0}`, `{"power": "rename", "village": 3, "name": "Clairefont"}`, `{"power": "sign"}` : l'acte (`DeedView`), ou 400 et la raison du refus (cible inconnue, pas assez de foi…). Les 21 pouvoirs sont listés par `GET /api/god`.
+- `POST /api/god` avec une commande, par exemple `{"power": "rain", "village": 3}`, `{"power": "bless", "person": 12}`, `{"power": "matchmake", "a": 12, "b": 40}`, `{"power": "road", "from": 1, "to": 4}`, `{"power": "forest", "x": 300, "y": 410}`, `{"power": "deposit", "x": 300, "y": 410, "resource": 2}`, `{"power": "plague", "village": 3, "disease": 0}`, `{"power": "rename", "village": 3, "name": "Clairefont"}`, `{"power": "sign"}`, `{"power": "flood", "village": 3}`, `{"power": "wildfire", "x": 300, "y": 410}` : l'acte (`DeedView`), ou 400 et la raison du refus (cible inconnue, pas assez de foi…). Les 25 pouvoirs sont listés par `GET /api/god`.
 - `GET /api/god/deeds` : tout le journal des actes, rejouable par `hameaux-cli run --god`.
 - `POST /api/admin/pause`, `/resume`, `/save` ; `POST /api/admin/speed` avec `{"speed": 600}`.
 

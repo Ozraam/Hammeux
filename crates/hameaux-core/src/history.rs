@@ -129,10 +129,12 @@ pub enum Kind {
     Other,
     /// Le mode dieu et la religion (phase 8 ; après `Other` pour garder les numéros).
     Divine,
+    /// Le temps, les catastrophes et les dangers de la route (phase 10).
+    Weather,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 16] = [
+    pub const ALL: [Kind; 17] = [
         Kind::Birth,
         Kind::Death,
         Kind::Love,
@@ -148,6 +150,7 @@ impl Kind {
         Kind::Village,
         Kind::Feelings,
         Kind::Divine,
+        Kind::Weather,
         Kind::Other,
     ];
 
@@ -169,6 +172,7 @@ impl Kind {
             Kind::Feelings => "vie intime",
             Kind::Other => "divers",
             Kind::Divine => "le Ciel",
+            Kind::Weather => "temps et périls",
         }
     }
 
@@ -180,13 +184,25 @@ impl Kind {
             Kind::Birth
         } else if has("Ciel") || has(" temple") {
             Kind::Divine
+        } else if starts("Crue")
+            || starts("Incendie de forêt")
+            || starts("L'incendie ")
+            || starts("Gel tardif")
+            || starts("Un violent orage")
+            || starts("L'hiver arrive")
+            || starts("L'été s'annonce")
+            || has(", le printemps a été ")
+            || has(", le printemps est ")
+            || starts("Des brigands")
+            || starts("La charrette de")
+        {
+            Kind::Weather
         } else if starts("Décès") || has(" meurt ") {
             Kind::Death
         } else if starts("Fondation de")
             || has("partent fonder un village")
             || starts("La faim s'installe")
             || has("non moissonné")
-            || has(", le printemps est ")
         {
             Kind::Village
         } else if has("Épidémie") || has("épidémie") {
@@ -240,6 +256,12 @@ impl Kind {
     pub fn notable(self, text: &str) -> bool {
         match self {
             Kind::Village | Kind::Health | Kind::Government | Kind::Knowledge => true,
+            Kind::Weather => {
+                text.starts_with("Crue")
+                    || text.starts_with("L'incendie ")
+                    || text.starts_with("L'hiver arrive")
+                    || text.starts_with("L'été s'annonce brûlant")
+            }
             Kind::Divine => {
                 !text.starts_with("Le Ciel fait pleuvoir") && !text.starts_with("Le Ciel renomme")
             }
@@ -303,11 +325,11 @@ mod tests {
             ),
             (
                 "À Belair, le printemps est froid et sec : la récolte sera maigre",
-                Kind::Village,
+                Kind::Weather,
             ),
             (
                 "À Belair, le printemps est doux et humide : la récolte s'annonce belle",
-                Kind::Village,
+                Kind::Weather,
             ),
             (
                 "La caisse de Belair fait l'aumône à 3 foyers dans le besoin (12 sous)",
@@ -393,6 +415,47 @@ mod tests {
                 Kind::Divine,
             ),
             ("Le temple de Belair est terminé", Kind::Divine),
+            (
+                "Crue : la rivière déborde à Belair (2 champs noyés)",
+                Kind::Weather,
+            ),
+            (
+                "Incendie de forêt près de Belair : la foudre a mis le feu aux bois",
+                Kind::Weather,
+            ),
+            (
+                "L'incendie près de Belair est éteint : 120 cases de forêt brûlées",
+                Kind::Weather,
+            ),
+            (
+                "Gel tardif à Belair : les jeunes pousses ont souffert",
+                Kind::Weather,
+            ),
+            (
+                "Un violent orage s'abat sur Belair : 2 champs couchés",
+                Kind::Weather,
+            ),
+            (
+                "L'hiver arrive, et il sera rude : le froid mord dans tout le pays",
+                Kind::Weather,
+            ),
+            (
+                "À Belair, le printemps a été sec : la récolte sera maigre",
+                Kind::Weather,
+            ),
+            (
+                "Des brigands détroussent Paul Roux sur la route de Belair : 20 sous",
+                Kind::Weather,
+            ),
+            (
+                "La charrette de Paul verse en route vers Belair : 9 unités de marchandises perdues",
+                Kind::Weather,
+            ),
+            ("Paul Roux meurt de froid à 71 ans", Kind::Death),
+            (
+                "Le Ciel fait déborder la rivière à Belair (1 champ noyé)",
+                Kind::Divine,
+            ),
             ("Une route relie désormais Belair et Rivedoux", Kind::Trade),
         ];
         for (text, kind) in cases {

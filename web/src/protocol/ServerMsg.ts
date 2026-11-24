@@ -4,6 +4,7 @@ import type { GodGauge } from "./GodGauge";
 import type { RunState } from "./RunState";
 import type { Scene } from "./Scene";
 import type { VillageView } from "./VillageView";
+import type { WeatherMap } from "./WeatherMap";
 
 export type ServerMsg = { "type": "Hello", server_version: string, 
 /**
@@ -14,4 +15,4 @@ web_build: string, seed: number, run: RunState, clock: ClockView, map_rev: numbe
 /**
  * Foi du joueur, dernier signe, nombre d'actes.
  */
-god: GodGauge, } | { "type": "Scene" } & Scene | { "type": "Villages", villages: Array<VillageView>, };
+god: GodGauge, } | { "type": "Scene" } & Scene | { "type": "Villages", villages: Array<VillageView>, weather: WeatherMap, };

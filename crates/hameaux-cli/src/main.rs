@@ -78,6 +78,8 @@ fn main() {
             let mut intents = [0.0f32; 13];
             // Tension économique, relevée chaque jour après le marché.
             let mut strain = Strain::default();
+            // Météo, relevée chaque jour à midi.
+            let mut sky = Sky::default();
             let mut intent_samples = 0.0f32;
             for day in 1..=days {
                 for _ in 0..TICKS_PER_DAY {
@@ -107,6 +109,7 @@ fn main() {
                     let c = world.clock();
                     if world.tick % TICKS_PER_DAY == 12 * hameaux_core::tuning::HOUR {
                         strain.sample(&world);
+                        sky.sample(&world);
                     }
                     if (c.hour == 10 || c.hour == 15)
                         && world.tick.is_multiple_of(hameaux_core::tuning::HOUR)
@@ -255,6 +258,7 @@ fn main() {
                 println!("  {:<20} {}", v.name, row.join(" "));
             }
             strain.report(&world);
+            sky.report(&world);
             society(&world);
             history(&world);
             heaven(&world);
@@ -327,6 +331,27 @@ fn demo_command(world: &World, step: usize) -> Option<hameaux_core::god::GodComm
         "bounty" => G::Bounty { village: v },
         "locusts" => G::Locusts { village: v },
         "abundance" => G::Abundance { village: v },
+        "clear_sky" => G::ClearSky { village: v },
+        "cold" => G::Cold { village: v },
+        "flood" => G::Flood { village: v },
+        "wildfire" => {
+            // La forêt la plus proche d'un village.
+            let vv = &world.villages[pick(n) as usize];
+            let m = &world.map;
+            let tile = (0..m.len())
+                .filter(|&i| {
+                    matches!(
+                        m.biome_at(i),
+                        hameaux_core::Biome::Forest | hameaux_core::Biome::Conifers
+                    )
+                })
+                .min_by_key(|&i| {
+                    let (x, y) = m.xy(i);
+                    (x as i64 - vv.x as i64).abs() + (y as i64 - vv.y as i64).abs()
+                })?;
+            let (x, y) = m.xy(tile);
+            G::Wildfire { x, y }
+        }
         "forest" => G::Forest {
             x: vx + 30,
             y: vy + 30,
@@ -752,6 +777,95 @@ impl Strain {
             .filter(|&&k| k == hameaux_core::economy::Workshop::Smithy)
             .count();
         println!("  forges : {smithies} pour {} villages", w.villages.len());
+    }
+}
+
+/// Météo et risques (phase 10) : humidité des sols, pousse, température par saison, récoltes
+/// promises, catastrophes et dangers de la route.
+#[derive(Default)]
+struct Sky {
+    /// Par saison : relevés, humidité, pousse, température, pluie.
+    n: [f32; 4],
+    wet: [f32; 4],
+    crop: [f32; 4],
+    temp: [f32; 4],
+    rain: [f32; 4],
+    /// Promesses de récolte relevées au dernier jour de l'été (une par village et par an).
+    harvests: Vec<f32>,
+}
+
+impl Sky {
+    fn sample(&mut self, w: &World) {
+        let c = w.clock();
+        let s = c.season as usize;
+        for vi in 0..w.villages.len() {
+            let l = w.weather.local(vi);
+            self.n[s] += 1.0;
+            self.wet[s] += l.wet;
+            self.crop[s] += l.crop;
+            self.temp[s] += l.temp;
+            self.rain[s] += if l.rain > 0.08 { 1.0 } else { 0.0 };
+            if c.season == hameaux_core::Season::Summer && c.day == hameaux_core::clock::DAYS_PER_SEASON {
+                self.harvests.push(w.land.year(vi).harvest);
+            }
+        }
+    }
+
+    fn report(&self, w: &World) {
+        let st = &w.weather.stats;
+        let seasons: Vec<String> = ["printemps", "été", "automne", "hiver"]
+            .iter()
+            .enumerate()
+            .map(|(k, name)| {
+                let n = self.n[k].max(1.0);
+                format!(
+                    "{name} {:.0} °C, sol {:.2}, pousse {:.2}, pluie à midi {:.0} %",
+                    self.temp[k] / n,
+                    self.wet[k] / n,
+                    self.crop[k] / n,
+                    100.0 * self.rain[k] / n
+                )
+            })
+            .collect();
+        println!("— météo — {}", seasons.join(" · "));
+        let h = &self.harvests;
+        if !h.is_empty() {
+            let mean = h.iter().sum::<f32>() / h.len() as f32;
+            let lean = h.iter().filter(|&&x| x < 0.85).count();
+            let fat = h.iter().filter(|&&x| x > 1.06).count();
+            println!(
+                "  récoltes promises : {:.2} en moyenne ({:.2}–{:.2}) · {lean} maigres, {fat} belles sur {}",
+                mean,
+                h.iter().copied().fold(f32::MAX, f32::min),
+                h.iter().copied().fold(0.0, f32::max),
+                h.len()
+            );
+        }
+        println!(
+            "  {} fronts · {} jours de pluie, {} de neige, {} de sol sec (par village) · {} orages · {} gels tardifs · {} hivers rudes ({} morts de froid) · {} crues · {} champs perdus",
+            st.fronts,
+            st.rainy_days,
+            st.snowy_days,
+            st.drought_days,
+            st.storms,
+            st.frosts,
+            st.harsh_winters,
+            st.cold_deaths,
+            st.floods,
+            st.fields_lost
+        );
+        println!(
+            "  {} incendies, {} cases brûlées ({} repoussées) · route : {} détroussés ({:.0} sous, {:.0} unités), {} accidents ({:.0} unités perdues), {} heures de retard",
+            st.fires,
+            st.burnt_tiles,
+            st.regrown_tiles,
+            st.robberies,
+            st.stolen_coins,
+            st.stolen_goods,
+            st.mishaps,
+            st.lost_goods,
+            st.delays
+        );
     }
 }
 

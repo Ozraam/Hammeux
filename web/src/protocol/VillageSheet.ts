@@ -5,6 +5,7 @@ import type { LandView } from "./LandView";
 import type { LinkView } from "./LinkView";
 import type { PersonRef } from "./PersonRef";
 import type { PriceRow } from "./PriceRow";
+import type { SkyView } from "./SkyView";
 import type { TechView } from "./TechView";
 import type { VillageRef } from "./VillageRef";
 
@@ -53,6 +54,11 @@ techs: Array<TechView>,
  * Terres, gibier et poisson, année, taille et aumônes, argent des foyers (phase 9).
  */
 land: LandView, 
+/**
+ * Le temps qu'il fait, le sol, la neige, les crues et incendies, les routes dangereuses
+ * (phase 10).
+ */
+weather: SkyView, 
 /**
  * Malades en ce moment.
  */

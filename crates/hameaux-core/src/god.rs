@@ -42,6 +42,23 @@ pub enum GodCommand {
     Abundance {
         village: u32,
     },
+    /// Éclaircie : les nuages qui couvrent un village se dissipent (phase 10).
+    ClearSky {
+        village: u32,
+    },
+    /// Vague de froid posée sur un village (l'hiver : un froid mortel).
+    Cold {
+        village: u32,
+    },
+    /// Crue : la rivière sort de son lit.
+    Flood {
+        village: u32,
+    },
+    /// Mettre le feu à une forêt.
+    Wildfire {
+        x: u32,
+        y: u32,
+    },
     /// Faire pousser une forêt autour d'une case.
     Forest {
         x: u32,
@@ -156,7 +173,7 @@ const PEOPLE: &str = "Villageois";
 const SOCIETY: &str = "Société";
 const CREATION: &str = "Création";
 
-pub const POWERS: [Power; 21] = [
+pub const POWERS: [Power; 25] = [
     Power {
         key: "rain",
         label: "Pluie",
@@ -210,6 +227,42 @@ pub const POWERS: [Power; 21] = [
         category: NATURE,
         target: Target::Village,
         benign: true,
+    },
+    Power {
+        key: "clear_sky",
+        label: "Éclaircie",
+        help: "Les nuages et l'orage qui couvrent le village se dissipent.",
+        cost: 12.0,
+        category: NATURE,
+        target: Target::Village,
+        benign: true,
+    },
+    Power {
+        key: "cold",
+        label: "Vague de froid",
+        help: "Un froid mordant s'abat pour deux jours : il neige s'il pleut, le bois brûle vite.",
+        cost: 25.0,
+        category: NATURE,
+        target: Target::Village,
+        benign: false,
+    },
+    Power {
+        key: "flood",
+        label: "Crue",
+        help: "La rivière sort de son lit : les champs proches de l'eau sont noyés.",
+        cost: 35.0,
+        category: NATURE,
+        target: Target::Village,
+        benign: false,
+    },
+    Power {
+        key: "wildfire",
+        label: "Incendie de forêt",
+        help: "Le feu prend dans les bois et s'étend tant qu'ils sont secs.",
+        cost: 30.0,
+        category: NATURE,
+        target: Target::Tile,
+        benign: false,
     },
     Power {
         key: "forest",
@@ -357,6 +410,10 @@ impl GodCommand {
             GodCommand::Bounty { .. } => "bounty",
             GodCommand::Locusts { .. } => "locusts",
             GodCommand::Abundance { .. } => "abundance",
+            GodCommand::ClearSky { .. } => "clear_sky",
+            GodCommand::Cold { .. } => "cold",
+            GodCommand::Flood { .. } => "flood",
+            GodCommand::Wildfire { .. } => "wildfire",
             GodCommand::Forest { .. } => "forest",
             GodCommand::Deposit { .. } => "deposit",
             GodCommand::Cure { .. } => "cure",
