@@ -5,8 +5,10 @@
 
 use hameaux_core::{Biome, Clock, Map, Resource, World, map::CHUNK, settlement::Village};
 
+mod god;
 mod pages;
 mod views;
+pub use god::*;
 pub use pages::*;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -76,6 +78,7 @@ pub enum ServerMsg {
         map_rev: u64,
         #[ts(type = "number")]
         events_seq: u64,
+        god: GodGauge,
     },
     /// Le monde a avancé (envoyé au plus quelques fois par seconde). `map_rev` change quand
     /// des cases de la carte changent (voir `/api/map/changes`), `events_seq` quand la
@@ -87,6 +90,8 @@ pub enum ServerMsg {
         map_rev: u64,
         #[ts(type = "number")]
         events_seq: u64,
+        /// Foi du joueur, dernier signe, nombre d'actes.
+        god: GodGauge,
     },
     /// Ce qui se trouve dans la zone regardée (après un `View` avec `detail`).
     Scene(Scene),

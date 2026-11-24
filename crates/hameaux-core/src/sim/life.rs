@@ -577,7 +577,7 @@ impl World {
     }
 
     /// Un nouveau venu arrive à pied depuis les environs.
-    fn arrive(&mut self, vi: usize, last: &str, female: bool, age: f32, home: u32) -> u32 {
+    pub(super) fn arrive(&mut self, vi: usize, last: &str, female: bool, age: f32, home: u32) -> u32 {
         let p = self.new_person(vi, last, female, age, Some(home), &[]);
         let (x, y) = self.far_tile(vi, 22);
         let h = self.villages[vi].house(home).unwrap();

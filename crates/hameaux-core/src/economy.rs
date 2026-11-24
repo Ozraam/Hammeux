@@ -146,14 +146,17 @@ pub enum Workshop {
     Mill,
     Bakery,
     Smithy,
+    /// Temple du Ciel (phase 8) : on y prie, personne n'y travaille.
+    Temple,
 }
 
 impl Workshop {
-    pub fn job(self) -> Job {
+    pub fn job(self) -> Option<Job> {
         match self {
-            Workshop::Mill => Job::Miller,
-            Workshop::Bakery => Job::Baker,
-            Workshop::Smithy => Job::Smith,
+            Workshop::Mill => Some(Job::Miller),
+            Workshop::Bakery => Some(Job::Baker),
+            Workshop::Smithy => Some(Job::Smith),
+            Workshop::Temple => None,
         }
     }
 
@@ -162,6 +165,7 @@ impl Workshop {
             Workshop::Mill => "moulin",
             Workshop::Bakery => "four à pain",
             Workshop::Smithy => "forge",
+            Workshop::Temple => "temple",
         }
     }
 
@@ -171,6 +175,7 @@ impl Workshop {
             Workshop::Mill => "le moulin",
             Workshop::Bakery => "le four à pain",
             Workshop::Smithy => "la forge",
+            Workshop::Temple => "le temple",
         }
     }
 
@@ -180,6 +185,7 @@ impl Workshop {
             Workshop::Mill => "un moulin",
             Workshop::Bakery => "un four à pain",
             Workshop::Smithy => "une forge",
+            Workshop::Temple => "un temple",
         }
     }
 
@@ -189,6 +195,7 @@ impl Workshop {
             Workshop::Mill => 2,
             Workshop::Bakery => 3,
             Workshop::Smithy => 2,
+            Workshop::Temple => 0,
         }
     }
 }

@@ -11,4 +11,9 @@ feast: boolean,
 /**
  * Foire ouverte.
  */
-fair: boolean, };
+fair: boolean, 
+/**
+ * Effets du Ciel en cours (index de `SpellKind` : 0 pluie, 1 sécheresse, 2 orage,
+ * 3 abondance, 4 sauterelles, 5 récolte miraculeuse).
+ */
+spells: Array<number>, };

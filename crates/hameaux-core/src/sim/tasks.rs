@@ -174,6 +174,7 @@ impl World {
                         } else {
                             0.7
                         }) * self.tech_bonus(i, Tech::Nets, 1.4)
+                            * self.abundance(self.people[i].village)
                     }
                     Good::Meat => {
                         (if self.map.resource[tile as usize] == MapResource::Game as u8 {
@@ -181,6 +182,7 @@ impl World {
                         } else {
                             0.5
                         }) * self.tech_bonus(i, Tech::Snares, 1.3)
+                            * self.abundance(self.people[i].village)
                     }
                     Good::Ore => 1.5,
                     _ => 1.0,
@@ -395,6 +397,15 @@ impl World {
             ));
         }
 
+        // Prier, le jour de repos en matinée : les croyants, d'autant plus qu'ils manquent de sens.
+        let belief = self.belief_of(i);
+        if rest_day(tick) && (9..=11).contains(&self.clock().hour) && belief >= crate::god::BELIEVER {
+            options.push((
+                0.7 + belief + 0.4 * t.piety + 0.5 * (1.0 - n.meaning),
+                Intent::Pray,
+            ));
+        }
+
         // Discuter avec un ami.
         if let Some(f) = self.pick_friend(i) {
             let c = (1.0 - n.company) * (0.5 + 0.9 * t.sociability) + 0.15 * mood.joy + 0.3 * evening + 0.05;
@@ -451,6 +462,12 @@ impl World {
             Intent::Visit(q) => self.meet(i, q, false),
             Intent::Stroll => {
                 self.stroll(i);
+                true
+            }
+            Intent::Pray => {
+                let spot = self.prayer_spot(self.village_of(i));
+                let ticks = 30 * MINUTE + self.rng.below(30 * MINUTE);
+                self.plan(i, [Step::Go(spot), Self::wait(ticks, Act::Praying)]);
                 true
             }
             Intent::Feast => {
@@ -728,11 +745,11 @@ impl World {
         self.map.idx(cx, cy) as u32
     }
 
-    fn village_of(&self, i: usize) -> usize {
+    pub(super) fn village_of(&self, i: usize) -> usize {
         self.village_index(self.people[i].village).unwrap_or(0)
     }
 
-    fn near_home(&mut self, i: usize, ticks: u64, act: Act) {
+    pub(super) fn near_home(&mut self, i: usize, ticks: u64, act: Act) {
         let (x, y) = self
             .home_tile(i)
             .unwrap_or_else(|| self.villages[self.village_of(i)].door());
@@ -901,6 +918,7 @@ impl World {
             Workshop::Mill => Good::Flour,
             Workshop::Bakery => Good::Bread,
             Workshop::Smithy => Good::Tools,
+            Workshop::Temple => return false,
         };
         let limit = if kind == Workshop::Smithy { 6.0 } else { 60.0 };
         if self
@@ -913,6 +931,7 @@ impl World {
             Workshop::Mill => Act::Milling,
             Workshop::Bakery => Act::Baking,
             Workshop::Smithy => Act::Forging,
+            Workshop::Temple => Act::Praying,
         };
         self.plan(
             i,

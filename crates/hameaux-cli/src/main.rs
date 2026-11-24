@@ -3,7 +3,14 @@
 //! ```text
 //! hameaux-cli map  [--seed N] [--size N] [--out carte.png]   # aperçu de la carte
 //! hameaux-cli run  [--seed N] [--size N] [--days N]          # simulation accélérée
+//!                  [--god actes.json | --god demo]           # … avec le mode dieu
 //! ```
+//!
+//! `--god actes.json` rejoue des commandes datées : le journal du serveur
+//! (`GET /api/god/deeds`) tel quel, ou une liste écrite à la main
+//! (`[{"day": 3, "command": {"power": "rain", "village": 1}}, …]`, `tick` ou `day`).
+//! `--god demo` laisse un dieu automatique essayer chaque pouvoir tour à tour, dès que la
+//! foi le permet, pour en mesurer l'effet sur l'équilibre.
 
 use std::{fs::File, io::BufWriter, time::Instant};
 
@@ -22,6 +29,7 @@ fn main() {
     let mut args = std::env::args().skip(1);
     let cmd = args.next().unwrap_or_else(|| usage());
     let (mut seed, mut size, mut days, mut out) = (42u64, 1024u32, 7u64, String::from("carte.png"));
+    let mut god: Option<String> = None;
     while let Some(a) = args.next() {
         let mut value = || args.next().unwrap_or_else(|| usage());
         match a.as_str() {
@@ -29,6 +37,7 @@ fn main() {
             "--size" => size = value().parse().unwrap_or_else(|_| usage()),
             "--days" => days = value().parse().unwrap_or_else(|_| usage()),
             "--out" => out = value(),
+            "--god" => god = Some(value()),
             _ => usage(),
         }
     }
@@ -52,16 +61,46 @@ fn main() {
             println!("aperçu écrit dans {out}");
         }
         "run" => {
+            let mut script = match god.as_deref() {
+                Some("demo") | None => Vec::new(),
+                Some(path) => read_script(path),
+            };
+            script.sort_by_key(|s| s.0);
+            let mut next_order = 0;
+            let demo = god.as_deref() == Some("demo");
+            let mut demo_step = 0usize;
             weekly(&world, 0);
             let start = Instant::now();
             let mut tally: std::collections::BTreeMap<String, usize> = Default::default();
             let mut seen = world.chronicle.next_seq;
             // Part des adultes au travail / en visite, relevée à 10 h et 15 h.
             let (mut working, mut social, mut samples) = (0.0f32, 0.0f32, 0.0f32);
-            let mut intents = [0.0f32; 12];
+            let mut intents = [0.0f32; 13];
             let mut intent_samples = 0.0f32;
             for day in 1..=days {
                 for _ in 0..TICKS_PER_DAY {
+                    while next_order < script.len() && script[next_order].0 <= world.tick {
+                        let cmd = &script[next_order].1;
+                        match world.god_command(cmd) {
+                            Ok(d) => println!("    [{}] {}", Clock::at(d.tick), d.text),
+                            Err(e) => println!("    [{}] refusé : {e}", world.clock()),
+                        }
+                        next_order += 1;
+                    }
+                    // Le dieu automatique agit chaque jour à 9 h.
+                    if demo && world.tick % TICKS_PER_DAY == 9 * hameaux_core::tuning::HOUR {
+                        if let Some(cmd) = demo_command(&world, demo_step) {
+                            if world.god.faith >= cmd.power().cost {
+                                match world.god_command(&cmd) {
+                                    Ok(d) => println!("    [{}] {}", Clock::at(d.tick), d.text),
+                                    Err(e) => println!("    [{}] refusé : {e}", world.clock()),
+                                }
+                                demo_step += 1;
+                            }
+                        } else {
+                            demo_step += 1;
+                        }
+                    }
                     world.step();
                     let c = world.clock();
                     if (c.hour == 10 || c.hour == 15)
@@ -212,6 +251,7 @@ fn main() {
             }
             society(&world);
             history(&world);
+            heaven(&world);
             println!("— événements par type —");
             let mut kinds: Vec<_> = tally.into_iter().collect();
             kinds.sort_by_key(|k| std::cmp::Reverse(k.1));
@@ -225,6 +265,153 @@ fn main() {
             }
         }
         _ => usage(),
+    }
+}
+
+/// Lit un script de commandes datées (`tick` ou `day`, éventuellement fractionnaire).
+fn read_script(path: &str) -> Vec<(u64, hameaux_core::god::GodCommand)> {
+    #[derive(serde::Deserialize)]
+    struct Line {
+        tick: Option<u64>,
+        day: Option<f64>,
+        command: hameaux_core::god::GodCommand,
+    }
+    let text = std::fs::read_to_string(path).unwrap_or_else(|e| {
+        eprintln!("{path} : {e}");
+        std::process::exit(2)
+    });
+    let lines: Vec<Line> = serde_json::from_str(&text).unwrap_or_else(|e| {
+        eprintln!("{path} : {e}");
+        std::process::exit(2)
+    });
+    lines
+        .into_iter()
+        .map(|l| {
+            let tick = l
+                .tick
+                .or(l.day.map(|d| (d * TICKS_PER_DAY as f64) as u64))
+                .unwrap_or(0);
+            (tick, l.command)
+        })
+        .collect()
+}
+
+/// Le dieu automatique de `--god demo` : chaque pouvoir tour à tour, sur une cible tirée
+/// au hasard (le hasard de la CLI, pas celui du monde). `None` : rien à viser pour celui-ci.
+fn demo_command(world: &World, step: usize) -> Option<hameaux_core::god::GodCommand> {
+    use hameaux_core::god::{GodCommand as G, POWERS};
+    let n = world.villages.len() as u64;
+    let pick = |k: u64| (world.tick / 7 + step as u64 * 2_654_435_761) % k.max(1);
+    let v = world.villages[pick(n) as usize].id;
+    let tick = world.tick;
+    let adults: Vec<u32> = world
+        .alive()
+        .filter(|p| p.village == v && !p.child(tick) && p.job.is_some())
+        .map(|p| p.id)
+        .collect();
+    let person = adults
+        .get((tick as usize / 13 + step) % adults.len().max(1))
+        .copied();
+    let (vx, vy) = (world.villages[0].x, world.villages[0].y);
+    let key = POWERS[step % POWERS.len()].key;
+    Some(match key {
+        "rain" => G::Rain { village: v },
+        "drought" => G::Drought { village: v },
+        "storm" => G::Storm { village: v },
+        "bounty" => G::Bounty { village: v },
+        "locusts" => G::Locusts { village: v },
+        "abundance" => G::Abundance { village: v },
+        "forest" => G::Forest {
+            x: vx + 30,
+            y: vy + 30,
+        },
+        "deposit" => G::Deposit {
+            x: vx + 20,
+            y: vy - 20,
+            resource: hameaux_core::Resource::Iron as u8,
+        },
+        "cure" => G::Cure { village: v },
+        "plague" => G::Plague {
+            village: v,
+            disease: 0,
+        },
+        "heal" => G::Heal {
+            person: *world.society.sick.keys().next()?,
+        },
+        "bless" => G::Bless { person: person? },
+        "curse" => G::Curse { person: person? },
+        "inspire" => G::Inspire { person: person? },
+        "matchmake" => {
+            let single: Vec<u32> = world
+                .alive()
+                .filter(|p| p.village == v && p.partner.is_none() && (18.0..=55.0).contains(&p.age(tick)))
+                .map(|p| p.id)
+                .collect();
+            let a = *single.first()?;
+            let b = *single
+                .iter()
+                .find(|&&b| world.people[b as usize].female != world.people[a as usize].female)?;
+            G::Matchmake { a, b }
+        }
+        "sign" => G::Sign,
+        "feast" => G::Feast { village: v },
+        "strangers" => G::Strangers { village: v },
+        "rename" => return None,
+        "road" => {
+            let w = world.villages[((pick(n) + 1 + (step / POWERS.len()) as u64) % n.max(1)) as usize].id;
+            G::Road { from: v, to: w }
+        }
+        _ => return None,
+    })
+}
+
+/// Bilan du mode dieu : foi, actes, croyants, cultes, prêtres, temples.
+fn heaven(world: &World) {
+    let g = &world.god;
+    let pop = world.alive().filter(|p| !p.brain.leaving).count();
+    let believers = world
+        .alive()
+        .filter(|p| g.belief(p.id) >= hameaux_core::god::BELIEVER)
+        .count();
+    let acts: Vec<String> = g.stats.by_power.iter().map(|(k, n)| format!("{k} {n}")).collect();
+    println!(
+        "— le Ciel — foi {:.0}/{:.0} (+{:.0}/jour) · {} actes ({} refusés, {:.0} de foi dépensée) · {believers} croyants sur {pop} · {} cultes nés, {} éteints · {} prêtres · {} temples · {} prières",
+        g.faith,
+        g.max_faith(),
+        g.regen,
+        g.stats.commands,
+        g.stats.refused,
+        g.stats.spent,
+        g.stats.cults,
+        g.stats.cults_lost,
+        g.stats.priests,
+        g.stats.temples,
+        g.stats.prayers
+    );
+    if !acts.is_empty() {
+        println!("  actes : {}", acts.join(" · "));
+    }
+    for (v, c) in &g.cults {
+        let Some(vi) = world.village_index(*v) else {
+            continue;
+        };
+        println!(
+            "  {:<20} {} · {} · {} croyant(s) · ferveur {:.2} · gratitude {:.2} · crainte {:.2} · {} bienfait(s), {} fléau(x){}",
+            world.villages[vi].name,
+            if c.founded.is_some() {
+                c.name.as_str()
+            } else {
+                "pas de culte"
+            },
+            c.attitude(),
+            c.believers,
+            c.devotion,
+            c.love,
+            c.fear,
+            c.miracles,
+            c.scourges,
+            if c.temple.is_some() { " · temple" } else { "" }
+        );
     }
 }
 
@@ -448,6 +635,8 @@ fn write_png(world: &World, path: &str) {
 }
 
 fn usage() -> ! {
-    eprintln!("usage : hameaux-cli map|run [--seed N] [--size N] [--days N] [--out fichier.png]");
+    eprintln!(
+        "usage : hameaux-cli map|run [--seed N] [--size N] [--days N] [--out fichier.png] [--god actes.json|demo]"
+    );
     std::process::exit(2)
 }

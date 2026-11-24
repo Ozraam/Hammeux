@@ -6,6 +6,7 @@
 pub mod clock;
 pub mod economy;
 pub mod events;
+pub mod god;
 pub mod history;
 pub mod map;
 pub mod mind;

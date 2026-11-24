@@ -17,8 +17,9 @@ use axum::{
     routing::{get, post},
 };
 use hameaux_protocol::{
-    ChronicleQuery, ClientMsg, ClockView, EventPage, EventView, FamilyTree, Health, HistoryView, MapChanges,
-    MapInfo, PersonSheet, Scene, ServerMsg, Summary, TradeMap, VillageSheet, VillageView, encode_chunk,
+    ChronicleQuery, ClientMsg, ClockView, DeedView, EventPage, EventView, FamilyTree, GodGauge, GodView,
+    Health, HistoryView, MapChanges, MapInfo, PersonSheet, Scene, ServerMsg, Summary, TradeMap, VillageSheet,
+    VillageView, encode_chunk,
 };
 use serde::Deserialize;
 use tokio::sync::{oneshot, watch};
@@ -56,6 +57,8 @@ pub fn router(state: AppState, web_dir: &Path) -> Router {
         .route("/api/trade", get(trade))
         .route("/api/chronicle", get(chronicle))
         .route("/api/summary", get(summary))
+        .route("/api/god", get(god_view).post(god_command))
+        .route("/api/god/deeds", get(god_deeds))
         .route("/api/admin/pause", post(pause))
         .route("/api/admin/resume", post(resume))
         .route("/api/admin/speed", post(speed))
@@ -133,6 +136,40 @@ async fn save_now(State(s): State<AppState>) -> impl IntoResponse {
     }
 }
 
+async fn god_view(State(s): State<AppState>) -> Json<GodView> {
+    let snap = s.snapshots.borrow().clone();
+    Json(GodView::of(&snap.world))
+}
+
+/// Un pouvoir : `{"power": "rain", "village": 3}`. Réponse : l'acte, ou 400 avec la raison du
+/// refus (cible inconnue, pas assez de foi…).
+async fn god_command(State(s): State<AppState>, body: axum::body::Bytes) -> Response {
+    let cmd: hameaux_core::god::GodCommand = match serde_json::from_slice(&body) {
+        Ok(c) => c,
+        Err(e) => return (StatusCode::BAD_REQUEST, format!("commande illisible : {e}")).into_response(),
+    };
+    let (tx, rx) = oneshot::channel();
+    if let Err(e) = send(&s, Command::God(cmd, tx)) {
+        return e.into_response();
+    }
+    match rx.await {
+        Ok(Ok(deed)) => Json(DeedView::of(&deed)).into_response(),
+        Ok(Err(e)) => (StatusCode::BAD_REQUEST, e).into_response(),
+        Err(_) => (StatusCode::SERVICE_UNAVAILABLE, "simulation arrêtée").into_response(),
+    }
+}
+
+/// Le journal complet des actes, rejouable : `hameaux-cli run --god actes.json`.
+async fn god_deeds(State(s): State<AppState>) -> Response {
+    let snap = s.snapshots.borrow().clone();
+    let deeds: Vec<_> = snap.world.god.deeds.iter().cloned().collect();
+    (
+        [(header::CONTENT_DISPOSITION, "inline; filename=\"actes.json\"")],
+        Json(deeds),
+    )
+        .into_response()
+}
+
 async fn ws(State(s): State<AppState>, upgrade: WebSocketUpgrade, page: PathBuf) -> impl IntoResponse {
     upgrade.on_upgrade(move |socket| stream(socket, s.snapshots, page))
 }
@@ -159,6 +196,7 @@ async fn stream(mut socket: WebSocket, snapshots: watch::Receiver<Arc<Snapshot>>
             clock: ClockView::of(&snap.world),
             map_rev: snap.world.map_rev,
             events_seq: snap.world.chronicle.next_seq,
+            god: GodGauge::of(&snap.world),
         }
     };
     if push(&mut socket, &hello).await.is_err() {
@@ -184,6 +222,7 @@ async fn stream(mut socket: WebSocket, snapshots: watch::Receiver<Arc<Snapshot>>
                         run: snap.run.clone(),
                         map_rev: w.map_rev,
                         events_seq: w.chronicle.next_seq,
+                        god: GodGauge::of(w),
                     });
                     if let Some((x0, y0, x1, y1)) = view {
                         out.push(ServerMsg::Scene(Scene::of(w, x0, y0, x1, y1)));

@@ -79,8 +79,11 @@ pub struct World {
     /// Chefs, justice, fêtes, maladies, savoirs (phase 6).
     pub society: crate::society::Society,
     /// Relevés des villages, flux du commerce, annales (phase 7). Partagé avec l'instantané
-    /// publié : modifier via `Arc::make_mut`. Toujours en dernier : voir `save.rs`.
+    /// publié : modifier via `Arc::make_mut`.
     pub history: Arc<crate::history::History>,
+    /// Mode dieu : foi, effets en cours, croyances, cultes, journal des actes (phase 8).
+    /// Toujours en dernier : voir `save.rs`.
+    pub god: crate::god::God,
     #[serde(skip)]
     pub caches: Scratch<Caches>,
 }
@@ -114,6 +117,7 @@ impl World {
             trade: Default::default(),
             society: Default::default(),
             history: Default::default(),
+            god: Default::default(),
             caches: Scratch::default(),
         };
         w.ensure_caches();

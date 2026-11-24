@@ -6,6 +6,7 @@
 //   #/chronique?…      chronique complète (filtres : village, kind, person, q, annals)
 //   #/arbre/12         arbre généalogique
 //   #/visite?since=T   depuis ta dernière visite
+//   #/ciel             le Ciel : foi, religion des villages, journal des actes (phase 8)
 
 import { chart, fmt, mountCharts, type Series } from "./charts";
 import { css } from "./palette";
@@ -13,6 +14,7 @@ import { cap, esc, money } from "./panels";
 import type { EventPage } from "./protocol/EventPage";
 import type { EventView } from "./protocol/EventView";
 import type { FamilyTree } from "./protocol/FamilyTree";
+import type { GodView } from "./protocol/GodView";
 import type { HistoryView } from "./protocol/HistoryView";
 import type { MapInfo } from "./protocol/MapInfo";
 import type { Summary } from "./protocol/Summary";
@@ -79,7 +81,7 @@ export class Pages {
   show() {
     clearTimeout(this.timer);
     const r = parse(location.hash);
-    const known = r && ["monde", "village", "commerce", "chronique", "arbre", "visite"].includes(r.name);
+    const known = r && ["monde", "village", "commerce", "chronique", "arbre", "visite", "ciel"].includes(r.name);
     this.route = known ? r : null;
     this.el.hidden = !this.route;
     document.body.classList.toggle("paged", !!this.route);
@@ -126,6 +128,10 @@ export class Pages {
         case "arbre":
           html = await this.tree(r.id ?? 0);
           break;
+        case "ciel":
+          html = await this.heaven();
+          refresh = 5000;
+          break;
         case "visite":
           {
             const since = r.params.get("since") ?? this.a.lastVisit();
@@ -154,6 +160,7 @@ export class Pages {
           ${tab("#/commerce", "Commerce", n === "commerce")}
           ${tab("#/chronique", "Chronique", n === "chronique")}
           ${tab("#/visite", "Depuis ta visite", n === "visite")}
+          ${tab("#/ciel", "Le Ciel", n === "ciel")}
           ${n === "arbre" ? tab(location.hash, "Arbre", true) : ""}
         </nav>
         <button class="close" data-close aria-label="Fermer (Échap)">×</button>
@@ -520,6 +527,45 @@ export class Pages {
         <svg width="${width}" height="${height}">${lines.join("")}</svg>
         ${boxes.map(([p, x, y]) => box(p, x, y)).join("")}
       </div></div>`;
+  }
+
+  // ---------------------------------------------------------------- le Ciel
+
+  private async heaven(): Promise<string> {
+    const v: GodView = await (await fetch("/api/god")).json();
+    const g = v.gauge;
+    const tile = (label: string, value: string, extra = "") => `<div class="tile"><span>${label}</span><b>${value}</b>${extra ? `<small>${extra}</small>` : ""}</div>`;
+    const share = v.population ? Math.round((v.believers / v.population) * 100) : 0;
+    const founded = v.cults.filter((c) => c.name);
+    const cults = v.cults.filter((c) => c.name || c.miracles || c.scourges || c.believers);
+    return `
+      <h1>Le Ciel</h1>
+      <p class="sub">Chaque pouvoir coûte de la foi, qui revient chaque jour, et plus vite quand les villages prient. Les prodiges marquent ceux qui les voient : un culte naît là où l'on croit assez, avec son prêtre, puis son temple.</p>
+      <div class="tiles">
+        ${tile("Foi", `${Math.floor(g.faith)} / ${Math.round(g.max)}`, `+${Math.round(g.regen)} par jour`)}
+        ${tile("Croyants", fmt.int(v.believers), `${share} % des habitants`)}
+        ${tile("Cultes", fmt.int(founded.length), `${v.temples} temple${v.temples > 1 ? "s" : ""} bâti${v.temples > 1 ? "s" : ""}`)}
+        ${tile("Actes", fmt.int(g.deeds), `${fmt.int(v.prayers)} prières`)}
+      </div>
+      <h3>Les villages et le Ciel</h3>
+      ${cults.length ? `<table class="grid-table">
+        <tr><th>Village</th><th>Culte</th><th>Ferveur</th><th class="num">Croyants</th><th>Prêtre</th><th>Temple</th></tr>
+        ${cults
+          .map(
+            (c) => `<tr>
+              <td class="top"><a data-sheet="${c.village.id}">${esc(c.village.name)}</a><br><span class="muted">${esc(c.attitude)}</span></td>
+              <td class="top">${c.name ? `${esc(cap(c.name))}<br><span class="muted">${esc(c.founded ?? "")}</span>` : `<span class="muted">—</span>`}
+                ${c.spells.length ? `<br>${c.spells.map((s) => `<span class="pos">✦ ${esc(s)}</span>`).join("<br>")}` : ""}</td>
+              <td class="top"><span class="devotion"><i style="width:${Math.round(c.devotion * 100)}%"></i></span><span class="muted">${c.miracles} bienfait${c.miracles > 1 ? "s" : ""} · ${c.scourges} fléau${c.scourges > 1 ? "x" : ""}</span></td>
+              <td class="num top">${c.believers}/${c.population}</td>
+              <td class="top">${c.priest ? `<a data-person="${c.priest.id}">${esc(c.priest.name)}</a>` : `<span class="muted">—</span>`}</td>
+              <td class="top">${c.temple ? esc(c.temple) : `<span class="muted">—</span>`}</td>
+            </tr>`,
+          )
+          .join("")}
+      </table>` : `<p class="muted">Personne ne croit encore au Ciel : il faut des prodiges.</p>`}
+      <h3>Journal des actes <a class="muted" href="/api/god/deeds" target="_blank" rel="noopener">(JSON rejouable)</a></h3>
+      ${v.deeds.length ? groupByDay(v.deeds.map((d): EventView => ({ seq: d.tick, tick: d.tick, date: d.date, text: `${d.text} (${d.cost} de foi)`, village: null, village_name: null, people: [], kind: 0 }))) : `<p class="muted">Le Ciel n'a encore rien fait. Ouvre « ✦ Pouvoirs » sous l'horloge.</p>`}`;
   }
 
   // ---------------------------------------------------------------- depuis ta dernière visite

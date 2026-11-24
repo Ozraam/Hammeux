@@ -79,6 +79,9 @@ pub struct CivicView {
     pub feast: bool,
     /// Foire ouverte.
     pub fair: bool,
+    /// Effets du Ciel en cours (index de `SpellKind` : 0 pluie, 1 sécheresse, 2 orage,
+    /// 3 abondance, 4 sauterelles, 5 récolte miraculeuse).
+    pub spells: Vec<u8>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
@@ -118,6 +121,13 @@ impl Scene {
                 color: v.color,
                 feast: world.festive(v.id),
                 fair: world.fair_open(v.id),
+                spells: world
+                    .god
+                    .spells
+                    .iter()
+                    .filter(|s| s.village == v.id && s.until > tick)
+                    .map(|s| s.kind as u8)
+                    .collect(),
             });
             for h in v.houses.iter().filter(|h| inside(h.x as f32, h.y as f32)) {
                 scene.houses.push(HouseView {
@@ -140,6 +150,7 @@ impl Scene {
                         Some(Workshop::Mill) => 1,
                         Some(Workshop::Bakery) => 2,
                         Some(Workshop::Smithy) => 3,
+                        Some(Workshop::Temple) => 4,
                     },
                 });
             }
@@ -267,6 +278,9 @@ pub struct PersonSheet {
     pub health: Option<String>,
     /// Condamnations par le chef.
     pub convictions: u32,
+    /// Croyance au Ciel (0–1) et ce qu'elle veut dire (« croyante fervente »).
+    pub belief: f32,
+    pub belief_label: String,
     pub events: Vec<EventView>,
 }
 
@@ -643,12 +657,19 @@ impl PersonSheet {
             office: world
                 .society
                 .office(p.village, id)
+                .or_else(|| world.god.office(p.village, id))
                 .filter(|_| p.alive())
                 .map(|o| {
                     let name = village.map(|v| v.name.as_str()).unwrap_or_default();
                     match (o, p.female) {
                         ("chef", true) => format!("cheffe {}", hameaux_core::sim::de(name)),
                         ("chef", false) => format!("chef {}", hameaux_core::sim::de(name)),
+                        ("prêtre du Ciel", true) => {
+                            format!("prêtresse du Ciel {}", hameaux_core::sim::at_place(name))
+                        }
+                        ("prêtre du Ciel", false) => {
+                            format!("prêtre du Ciel {}", hameaux_core::sim::at_place(name))
+                        }
                         _ => format!("membre du conseil {}", hameaux_core::sim::de(name)),
                     }
                 }),
@@ -660,6 +681,8 @@ impl PersonSheet {
                 format!("malade : {} ({left})", s.disease.label())
             }),
             convictions: world.society.convictions.get(&id).copied().unwrap_or(0),
+            belief: world.god.belief(id),
+            belief_label: hameaux_core::god::belief_label(world.god.belief(id), p.female).to_string(),
             events,
         })
     }
@@ -737,6 +760,8 @@ pub struct VillageSheet {
     pub epidemic: Option<String>,
     /// Fêtes et foires (en cours, annoncées, passées).
     pub festivities: Vec<String>,
+    /// Religion et effets du Ciel en cours.
+    pub cult: Option<crate::CultView>,
     pub events: Vec<EventView>,
 }
 
@@ -1016,6 +1041,7 @@ impl VillageSheet {
                 }
             }),
             festivities: festivities(world, id),
+            cult: crate::CultView::of(world, id),
             events: world
                 .chronicle
                 .events

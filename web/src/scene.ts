@@ -30,6 +30,11 @@ const CARRY: Record<number, number> = {
 /** `act` : index de `Act` côté Rust. */
 const ACT_CHATTING = 13;
 const ACT_FEASTING = 26;
+const ACT_PRAYING = 28;
+/** Effets du Ciel (`SpellKind` côté Rust). */
+const SPELL = { rain: 0, drought: 1, storm: 2, abundance: 3, locusts: 4, bounty: 5 } as const;
+/** Rayon (cases) des effets du Ciel autour du grenier. */
+const SPELL_R = 16;
 const FLAGS = [0xe0533d, 0xf2c94c, 0x3d8fd9, 0x4caf6b, 0xf2f2f2];
 
 interface Moving {
@@ -50,18 +55,23 @@ export class SceneLayer {
   readonly container = new Container();
   private readonly buildings = new Graphics();
   private readonly people = new Graphics();
+  /** Effets du Ciel, redessinés à chaque image par-dessus les habitants. */
+  private readonly sky = new Graphics();
+  private civic: Scene["civic"] = [];
   private moving = new Map<number, Moving>();
   private villageColor = new Map<number, number>();
   selected: number | null = null;
 
   constructor() {
-    this.container.addChild(this.buildings, this.people);
+    this.container.addChild(this.buildings, this.people, this.sky);
   }
 
   clear() {
     this.buildings.clear();
     this.people.clear();
+    this.sky.clear();
     this.moving.clear();
+    this.civic = [];
   }
 
   update(scene: Scene) {
@@ -78,6 +88,7 @@ export class SceneLayer {
     }
     this.moving = next;
     for (const c of scene.civic) this.villageColor.set(c.village, c.color);
+    this.civic = scene.civic;
     this.drawBuildings(scene);
   }
 
@@ -197,9 +208,21 @@ export class SceneLayer {
     }
   }
 
-  /** Moulin (ailes), four à pain (cheminée qui fume), forge (toit sombre, braises). */
+  /** Moulin (ailes), four à pain (cheminée qui fume), forge (toit sombre, braises), temple. */
   private drawWorkshop(g: Graphics, kind: number, x: number, y: number) {
     switch (kind) {
+      case 4: {
+        // Temple : murs blancs, haut toit pointu, clocheton et sa lueur dorée.
+        g.circle(x + 0.5, y + 0.2, 0.55).fill({ color: 0xffe08a, alpha: 0.18 });
+        g.rect(x + 0.12, y + 0.42, 0.76, 0.51).fill(0xf2efe6).stroke({ color: 0x5a4632, width: 0.06 });
+        g.poly([x + 0.04, y + 0.46, x + 0.5, y + 0.08, x + 0.96, y + 0.46]).fill(0x5b6f8a).stroke({ color: 0x2f3a4a, width: 0.06 });
+        g.rect(x + 0.42, y - 0.2, 0.16, 0.3).fill(0xf2efe6).stroke({ color: 0x5a4632, width: 0.04 });
+        g.poly([x + 0.38, y - 0.18, x + 0.5, y - 0.42, x + 0.62, y - 0.18]).fill(0x5b6f8a);
+        g.circle(x + 0.5, y - 0.46, 0.05).fill(0xffd34d);
+        g.roundRect(x + 0.4, y + 0.6, 0.2, 0.33, 0.1).fill(0x6b4a2a);
+        g.circle(x + 0.5, y + 0.3, 0.07).fill(0xffd34d);
+        break;
+      }
       case 1: {
         g.rect(x + 0.3, y + 0.35, 0.4, 0.58).fill(0xe8d9b5).stroke({ color: 0x5a4632, width: 0.06 });
         g.poly([x + 0.25, y + 0.38, x + 0.5, y + 0.15, x + 0.75, y + 0.38]).fill(0x8e3b2f);
@@ -226,10 +249,96 @@ export class SceneLayer {
     }
   }
 
+  /**
+   * Effets du Ciel autour des greniers : pluie (traits qui tombent), orage (nuée sombre,
+   * pluie drue, éclairs), sécheresse (chaleur orangée qui ondule), sauterelles (essaim qui
+   * tourbillonne), abondance (poissons et feuilles qui scintillent), récolte miraculeuse
+   * (paillettes dorées qui montent).
+   */
+  private drawSky(now: number, scale: number) {
+    const g = this.sky.clear();
+    const t = now / 1000;
+    /** Un trait d'au moins un pixel et demi à l'écran. */
+    const px = (w: number) => Math.max(w, 1.5 / scale);
+    for (const c of this.civic) {
+      if (!c.spells.length) continue;
+      const cx = c.x + 1, cy = c.y + 1;
+      const has = (k: number) => c.spells.includes(k);
+      if (has(SPELL.drought)) {
+        const p = 0.5 + 0.5 * Math.sin(t * 1.3);
+        g.circle(cx, cy, SPELL_R).fill({ color: 0xff9a3c, alpha: 0.08 + 0.05 * p });
+        for (let k = 0; k < 10; k++) {
+          const a = (k / 10) * Math.PI * 2 + t * 0.2;
+          const r = SPELL_R * (0.3 + 0.6 * rnd(c.village, k));
+          const x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r;
+          g.moveTo(x - 0.6, y).quadraticCurveTo(x, y - 0.4 - 0.3 * Math.sin(t * 3 + k), x + 0.6, y);
+        }
+        g.stroke({ color: 0xffd08a, width: px(0.08), alpha: 0.5 });
+      }
+      const storm = has(SPELL.storm);
+      if (storm) {
+        g.circle(cx, cy, SPELL_R * 1.1).fill({ color: 0x1a1f33, alpha: 0.32 });
+        // Éclair de temps en temps.
+        const flash = Math.floor(t * 0.7 + c.village);
+        if (rnd(flash, 1) < 0.35 && (t * 0.7 + c.village) % 1 < 0.08) {
+          g.circle(cx, cy, SPELL_R * 1.1).fill({ color: 0xe8f0ff, alpha: 0.35 });
+          let x = cx + (rnd(flash, 2) - 0.5) * SPELL_R, y = cy - SPELL_R * 0.8;
+          g.moveTo(x, y);
+          for (let k = 0; k < 6; k++) {
+            x += (rnd(flash, 3 + k) - 0.5) * 2.2;
+            y += SPELL_R * 0.28;
+            g.lineTo(x, y);
+          }
+          g.stroke({ color: 0xfaf7ff, width: px(0.25), alpha: 0.95 });
+        }
+      }
+      if (has(SPELL.rain) || storm) {
+        if (!storm) g.circle(cx, cy, SPELL_R).fill({ color: 0x6f86a8, alpha: 0.16 });
+        const n = storm ? 260 : 150;
+        const len = storm ? 1.4 : 0.9;
+        for (let k = 0; k < n; k++) {
+          const fx = rnd(c.village, k) * 2 - 1, fy = rnd(c.village, k + 500);
+          const x = cx + fx * SPELL_R - (storm ? 0.8 : 0.3);
+          const y = cy - SPELL_R + ((fy * 2 * SPELL_R + t * (storm ? 22 : 14)) % (2 * SPELL_R));
+          if (Math.hypot(x - cx, y - cy) > SPELL_R) continue;
+          g.moveTo(x, y).lineTo(x + (storm ? 0.5 : 0.18), y + len);
+        }
+        g.stroke({ color: 0xd6e6ff, width: px(0.07), alpha: storm ? 0.7 : 0.6 });
+      }
+      if (has(SPELL.locusts)) {
+        for (let k = 0; k < 220; k++) {
+          const a = rnd(c.village, k) * Math.PI * 2 + t * (0.6 + rnd(c.village, k + 9) * 0.8);
+          const r = SPELL_R * (0.15 + 0.85 * rnd(c.village, k + 77));
+          const x = cx + Math.cos(a) * r + Math.sin(t * 5 + k) * 0.3;
+          const y = cy + Math.sin(a) * r * 0.7 + Math.cos(t * 4 + k) * 0.3;
+          g.circle(x, y, px(0.09)).fill({ color: 0x3b3a1c, alpha: 0.85 });
+        }
+      }
+      if (has(SPELL.abundance)) {
+        for (let k = 0; k < 18; k++) {
+          const x = cx + (rnd(c.village, k + 200) * 2 - 1) * SPELL_R;
+          const y = cy + (rnd(c.village, k + 300) * 2 - 1) * SPELL_R;
+          const a = 0.5 + 0.5 * Math.sin(t * 2 + k);
+          if (k % 2) g.ellipse(x, y, 0.35, 0.15).fill({ color: 0x8fd3ff, alpha: 0.5 * a });
+          else g.poly([x, y - 0.3, x + 0.2, y, x, y + 0.3, x - 0.2, y]).fill({ color: 0x8be08b, alpha: 0.5 * a });
+        }
+      }
+      if (has(SPELL.bounty)) {
+        for (let k = 0; k < 60; k++) {
+          const x = cx + (rnd(c.village, k + 600) * 2 - 1) * SPELL_R;
+          const y = cy + SPELL_R - ((rnd(c.village, k + 700) * 2 * SPELL_R + t * 2.5) % (2 * SPELL_R));
+          if (Math.hypot(x - cx, y - cy) > SPELL_R) continue;
+          g.circle(x, y, px(0.12) + 0.06 * Math.sin(t * 4 + k)).fill({ color: 0xffe066, alpha: 0.75 });
+        }
+      }
+    }
+  }
+
   /** Redessine les habitants (à chaque image). `scale` : pixels par case. */
   draw(scale: number) {
     const g = this.people.clear();
     const now = performance.now();
+    this.drawSky(now, scale);
     // Du plus haut au plus bas de l'écran : ceux de devant passent par-dessus.
     const list = [...this.moving.values()].map((m) => ({ m, p: this.position(m, now) })).sort((a, b) => a.p.y - b.p.y);
     for (const { m, p } of list) this.figure(g, m, p.x, p.y, scale, now);
@@ -316,6 +425,11 @@ export class SceneLayer {
       g.roundRect(bx - 1.6 * u, by, 3.2 * u, 2.2 * u, 0.8 * u).fill({ color: 0xffffff, alpha: 0.92 });
       g.poly([bx - face * 0.6 * u, by + 2.1 * u, bx - face * 1.4 * u, by + 3 * u, bx, by + 2.1 * u]).fill({ color: 0xffffff, alpha: 0.92 });
       for (let k = -1; k <= 1; k++) g.circle(bx + k * 0.8 * u, by + 1.1 * u, 0.25 * u).fill(0x555555);
+    } else if (dot.act === ACT_PRAYING) {
+      // Prière : un halo doré qui pulse au-dessus de la tête.
+      const pulse = 0.6 + 0.4 * Math.sin(now / 400 + dot.id);
+      g.ellipse(x, top - 1.1 * u, 2 * u, 0.7 * u).stroke({ color: 0xffe08a, width: 0.5 * u, alpha: 0.5 + 0.4 * pulse });
+      g.circle(x, top - 1.1 * u, 2.6 * u).fill({ color: 0xffe08a, alpha: 0.12 * pulse });
     } else if (dot.act === ACT_FEASTING) {
       // Danse : petits confettis qui tournent au-dessus de la tête.
       const a = now / 300 + dot.id;
@@ -325,6 +439,12 @@ export class SceneLayer {
       }
     }
   }
+}
+
+/** Pseudo-hasard stable : `k`-ième nombre (0–1) d'une graine. */
+function rnd(seed: number, k: number): number {
+  const s = Math.sin(seed * 12.9898 + k * 78.233) * 43758.5453;
+  return s - Math.floor(s);
 }
 
 function mix(a: number, b: number, t: number): number {
